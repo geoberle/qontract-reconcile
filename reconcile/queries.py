@@ -2531,6 +2531,7 @@ CLOSED_BOX_MONITORING_PROBES_QUERY = """
       description
       url
       monitoring {
+        probeName
         provider {
           name
           description
@@ -2538,6 +2539,20 @@ CLOSED_BOX_MONITORING_PROBES_QUERY = """
           metricLabels
           timeout
           checkInterval
+          ... on EndpointMonitoringProviderCatchpoint_v1 {
+            catchpoint {
+              productId
+              credentials {
+                path
+                field
+              }
+              signalFxCredentials {
+                path
+                field
+              }
+              signalFxStreamUrl
+            }
+          }
           ... on EndpointMonitoringProviderBlackboxExporter_v1 {
             blackboxExporter {
               module

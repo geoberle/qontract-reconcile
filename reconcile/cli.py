@@ -109,6 +109,7 @@ import reconcile.cluster_deployment_mapper
 import reconcile.gabi_authorized_users
 import reconcile.status_page_components
 import reconcile.blackbox_exporter_endpoint_monitoring
+import reconcile.signalfx_prometheus
 
 from reconcile.status import ExitCodes
 from reconcile.status import RunningState
@@ -1479,3 +1480,9 @@ def blackbox_exporter_endpoint_monitoring(ctx, thread_pool_size,
                                           internal, use_jump_host):
     run_integration(reconcile.blackbox_exporter_endpoint_monitoring,
                     ctx.obj, thread_pool_size, internal, use_jump_host)
+
+
+@integration.command()
+@click.pass_context
+def signalfx_prometheus(ctx):
+    run_integration(reconcile.signalfx_prometheus, ctx.obj)

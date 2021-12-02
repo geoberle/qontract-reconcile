@@ -2,10 +2,6 @@ import logging
 import sys
 from urllib.parse import urlparse
 from typing import Any, Optional
-import json
-from dataclasses import field
-
-from pydantic.dataclasses import dataclass
 
 from reconcile import queries
 from reconcile.utils.openshift_resource import (
@@ -13,52 +9,12 @@ from reconcile.utils.openshift_resource import (
 from reconcile.utils.defer import defer
 from reconcile.utils.semver_helper import make_semver
 import reconcile.openshift_base as ob
+from reconcile.monitoring import Endpoint, EndpointMonitoringProvider
 
 QONTRACT_INTEGRATION = "blackbox-exporter-endpoint-monitoring"
 QONTRACT_INTEGRATION_VERSION = make_semver(0, 1, 0)
 
 LOG = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, eq=True)
-class BlackboxMonitoringProvider:
-
-    module: str
-    # the namespace of a blackbox-exporter provider is mapped as dict
-    # since its only use with ob.fetch_current_state is as a dict
-    namespace: dict[str, Any] = field(compare=False, hash=False)
-    exporterUrl: str
-
-
-@dataclass(frozen=True, eq=True)
-class EndpointMonitoringProvider:
-
-    name: str
-    provider: str
-    description: str
-    timeout: Optional[str] = None
-    checkInterval: Optional[str] = None
-    blackboxExporter: Optional[BlackboxMonitoringProvider] = None
-    metricLabels: Optional[str] = None
-
-    @property
-    def metric_labels(self):
-        return json.loads(self.metricLabels) if self.metricLabels else {}
-
-
-@dataclass
-class Endpoint:
-
-    name: str
-    description: str
-    url: str
-
-    @dataclass
-    class Monitoring:
-
-        provider: EndpointMonitoringProvider
-
-    monitoring: list[Monitoring]
 
 
 def parse_prober_url(url: str) -> dict[str, str]:
