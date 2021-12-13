@@ -2378,3 +2378,36 @@ STATUS_PAGE_QUERY = """
 def get_status_pages():
     gqlapi = gql.get_api()
     return gqlapi.query(STATUS_PAGE_QUERY)['status_pages']
+
+
+VAULT_SECRETS_QUERY = """
+{
+  namespaces: namespaces_v1 {
+    name
+    sharedResources {
+      openshiftResources {
+        provider
+        ... on NamespaceOpenshiftResourceVaultSecret_v1 {
+          path
+          version
+          name
+          type
+        }
+      }
+    }
+    openshiftResources {
+      provider
+      ... on NamespaceOpenshiftResourceVaultSecret_v1 {
+        path
+        version
+        name
+        type
+      }
+    }
+  }
+}
+"""
+
+def get_vault_queries():
+    gqlapi = gql.get_api()
+    return gqlapi.query(VAULT_SECRETS_QUERY)['namespaces']
