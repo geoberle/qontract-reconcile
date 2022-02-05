@@ -1,8 +1,11 @@
+from dataclasses import dataclass
 import logging
 import shutil
 import sys
 
 from textwrap import indent
+from typing import Any, Optional, Tuple
+from pyparsing import srange
 from sretoolbox.utils import threaded
 
 
@@ -17,7 +20,7 @@ from reconcile.utils.oc import OC_Map
 from reconcile.utils.ocm import OCMMap
 from reconcile.utils.oc import StatusCodeError
 from reconcile.utils.openshift_resource import ResourceInventory
-from reconcile.utils.terrascript_client import TerrascriptClient as Terrascript
+from reconcile.utils.terrascript_client import TerrascriptClient as Terrascript, TerraformResourceIdentifier, TerraformResourceSpec
 from reconcile.utils.terraform_client import OR, TerraformClient as Terraform
 from reconcile.utils.vault import VaultClient
 
@@ -291,6 +294,12 @@ TF_NAMESPACES_QUERY = """
     terraformResources {
       %s
     }
+    sharedResources {
+      name
+      terraformResources {
+        %s
+      }
+    }
     cluster {
       name
       serverUrl
@@ -323,7 +332,7 @@ TF_NAMESPACES_QUERY = """
     }
   }
 }
-""" % (indent(TF_RESOURCE, 6*' '))
+""" % (indent(TF_RESOURCE, 6*' '), indent(TF_RESOURCE, 8*' '))
 
 QONTRACT_INTEGRATION = 'terraform_resources'
 QONTRACT_INTEGRATION_VERSION = make_semver(0, 5, 2)
@@ -413,7 +422,7 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
         extra_labels['shard_key'] = account_name
     settings = queries.get_app_interface_settings()
     namespaces = gqlapi.query(TF_NAMESPACES_QUERY)['namespaces']
-    tf_namespaces = filter_tf_namespaces(namespaces, account_name)
+    tf_namespaces, resource_specs = detect_tf_resources(namespaces, account_name)
     ri, oc_map = fetch_current_state(dry_run, tf_namespaces, thread_pool_size,
                                      internal, use_jump_host, account_name)
     ts, working_dirs = init_working_dirs(accounts, thread_pool_size,
@@ -433,30 +442,78 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
                          settings=settings)
     else:
         ocm_map = None
-    ts.populate_resources(tf_namespaces, existing_secrets, account_name,
-                          ocm_map=ocm_map)
+    ts.populate_resources(resource_specs, existing_secrets, ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
-    return ri, oc_map, tf, tf_namespaces
+    return ri, oc_map, tf, tf_namespaces, resource_specs
 
 
-def filter_tf_namespaces(namespaces, account_name):
-    tf_namespaces = []
+def detect_tf_resources(namespaces: list[dict[str, Any]], account_name: Optional[str]) -> Tuple[list[dict[str, Any]], dict[TerraformResourceIdentifier, TerraformResourceSpec]]:
+    # * find namespaces with managed terraform resources
+    # * makes sure to only return resources that adhere to the optional
+    #   accountfilter `account_name`
+    # * also adds namespaces without resources when they are are enabled for
+    #   tf resource management - this enables handling of the namespaces when
+    #   resources are deleted
+
+    tf_namespaces: list[dict[str, Any]] = []
+    resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec] = {}
+
     for namespace_info in namespaces:
         if not namespace_info.get('managedTerraformResources'):
             continue
+
         if account_name is None:
-            tf_namespaces.append(namespace_info)
-            continue
-        tf_resources = namespace_info.get('terraformResources')
-        if not tf_resources:
-            tf_namespaces.append(namespace_info)
-            continue
-        for resource in tf_resources:
-            if resource['account'] == account_name:
-                tf_namespaces.append(namespace_info)
-                break
-    return tf_namespaces
+            tf_namespaces.append(account_name)
+
+        def init_resource_spec(resource: dict[str, Any], owner_tags: dict[str, str]) -> bool:
+          account = resource['account']
+          # Skip if account_name is specified and current resource does
+          # not belong to it
+          if account_name and account != account_name:
+              return False
+
+          identifier = TerraformResourceIdentifier.from_dict(resource)
+          resource_spec = resource_specs.get(identifier)
+          if not resource_spec:
+              resource_spec = \
+                  TerraformResourceSpec(
+                    resource=resource,
+                    namespaces=[namespace_info],
+                    owner_tags=owner_tags,
+                    output_resource_name=resource["output_resource_name"]
+                  )
+              resource_specs[identifier] = resource_spec
+          else:
+              resource_spec.namespaces.append(namespace_info)
+          return True
+
+        valid_resources_found_in_namespace = False
+
+        for resource in namespace_info.get('terraformResources') or []:
+            valid_resources_found_in_namespace |= init_resource_spec(
+                resource,
+                TerraformResourceSpec.build_namespaced_owner_tags(
+                    namespace_info["name"],
+                    namespace_info["cluster"]["name"],
+                    QONTRACT_INTEGRATION
+                )
+            )
+        for shared_resource in namespace_info.get('sharedResources') or []:
+            tf_resources = shared_resource.get('terraformResources') or []
+            for resource in tf_resources:
+                valid_resources_found_in_namespace |= init_resource_spec(
+                    resource,
+                    TerraformResourceSpec.build_sharedresource_owner_tags(
+                      shared_resource.get("name"),
+                      QONTRACT_INTEGRATION
+                    )
+                )
+
+        if valid_resources_found_in_namespace:
+          tf_namespaces.append(namespace_info)
+
+    return tf_namespaces, resource_specs
 
 
 def cleanup_and_exit(tf=None, status=False, working_dirs={}):
@@ -468,11 +525,12 @@ def cleanup_and_exit(tf=None, status=False, working_dirs={}):
     sys.exit(status)
 
 
-def write_outputs_to_vault(vault_path, ri):
+def write_outputs_to_vault(vault_path: str, ri: ResourceInventory, resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec]):
     integration_name = QONTRACT_INTEGRATION.replace('_', '-')
     vault_client = VaultClient()
     for cluster, namespace, _, data in ri:
         for name, d_item in data['desired'].items():
+            # todo handle write to correct location
             secret_path = \
                 f"{vault_path}/{integration_name}/{cluster}/{namespace}/{name}"
             secret = {'path': secret_path, 'data': d_item.body['data']}
@@ -486,7 +544,7 @@ def run(dry_run, print_to_file=None,
         light=False, vault_output_path='',
         account_name=None, extra_labels=None, defer=None):
 
-    ri, oc_map, tf, tf_namespaces = \
+    ri, oc_map, tf, tf_namespaces, resource_specs = \
         setup(dry_run, print_to_file, thread_pool_size, internal,
               use_jump_host, account_name, extra_labels)
 
@@ -515,7 +573,7 @@ def run(dry_run, print_to_file=None,
         if err:
             cleanup_and_exit(tf, err)
 
-    tf.populate_desired_state(ri, oc_map, tf_namespaces, account_name)
+    tf.populate_desired_state(ri, oc_map, tf_namespaces, account_name, resource_specs)
 
     actions = ob.realize_data(dry_run, oc_map, ri, thread_pool_size,
                               caller=account_name)
@@ -525,7 +583,7 @@ def run(dry_run, print_to_file=None,
                  account_name=account_name)
 
     if actions and vault_output_path:
-        write_outputs_to_vault(vault_output_path, ri)
+        write_outputs_to_vault(vault_output_path, ri, resource_specs)
 
     if ri.has_error_registered():
         err = True

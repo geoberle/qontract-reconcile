@@ -14,6 +14,7 @@ from sretoolbox.utils import retry
 from sretoolbox.utils import threaded
 
 import reconcile.utils.lean_terraform_client as lean_tf
+from reconcile.utils.terrascript_client import TerraformResourceSpec, TerraformResourceIdentifier
 
 from reconcile.utils import gql
 from reconcile.utils.openshift_resource import OpenshiftResource as OR
@@ -310,7 +311,8 @@ class TerraformClient:
 
         return data
 
-    def populate_desired_state(self, ri, oc_map, tf_namespaces, account_name):
+    def populate_desired_state(self, ri, oc_map, tf_namespaces, account_name,
+                               resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec]):
         self.init_outputs()  # get updated output
 
         # Dealing with credentials for RDS replicas
@@ -336,28 +338,28 @@ class TerraformClient:
                             formatted_output[replica_src_name]['db.user']
                         data['db.password'] = \
                             formatted_output[replica_src_name]['db.password']
-
-                cluster = data['{}_cluster'.format(self.integration_prefix)]
-                if not oc_map.get(cluster):
-                    continue
-                namespace = \
-                    data['{}_namespace'.format(self.integration_prefix)]
                 resource = data['{}_resource'.format(self.integration_prefix)]
                 output_resource_name = data['{}_output_resource_name'.format(
                     self.integration_prefix)]
                 annotations = data.get('{}_annotations'.format(
                     self.integration_prefix))
-
-                oc_resource = \
-                    self.construct_oc_resource(output_resource_name, data,
-                                               account, annotations)
-                ri.add_desired(
-                    cluster,
-                    namespace,
-                    resource,
-                    output_resource_name,
-                    oc_resource
-                )
+                identifier, provider = name.rsplit("-", 1)
+                spec = resource_specs.get(TerraformResourceIdentifier(identifier=identifier, provider=provider, account=account))
+                for namespace_info in spec.namespaces:
+                    cluster = namespace_info["cluster"]["name"]
+                    if not oc_map.get(cluster):
+                        continue
+                    namespace = namespace_info["name"]
+                    oc_resource = \
+                        self.construct_oc_resource(output_resource_name, data,
+                                                account, annotations)
+                    ri.add_desired(
+                        cluster,
+                        namespace,
+                        resource,
+                        output_resource_name,
+                        oc_resource
+                    )
 
     @staticmethod
     def get_replicas_info(namespaces):
