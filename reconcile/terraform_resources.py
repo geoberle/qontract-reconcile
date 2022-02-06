@@ -300,6 +300,15 @@ TF_NAMESPACES_QUERY = """
         %s
       }
     }
+    app {
+      name
+      parentApp {
+        name
+      }
+    }
+    environment {
+      name
+    }
     cluster {
       name
       serverUrl
@@ -339,7 +348,8 @@ QONTRACT_INTEGRATION_VERSION = make_semver(0, 5, 2)
 QONTRACT_TF_PREFIX = 'qrtf'
 
 
-def populate_oc_resources(spec, ri, account_name):
+def populate_oc_resources(spec: ob.StateSpec, ri: ResourceInventory,
+                          account_name: str):
     if spec.oc is None:
         return
 
@@ -421,28 +431,51 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
             raise ValueError(f"aws account {account_name} is not found")
         extra_labels['shard_key'] = account_name
     settings = queries.get_app_interface_settings()
-    namespaces = gqlapi.query(TF_NAMESPACES_QUERY)['namespaces']
-    tf_namespaces, resource_specs = detect_tf_resources(namespaces, account_name)
+
+    # find namespaces with terraform resources and create a spec object
+    # for each resource found
+    tf_namespaces, resource_specs = detect_tf_resources(
+        gqlapi.query(TF_NAMESPACES_QUERY)['namespaces'],
+        account_name
+    )
+
+    # create a resource inventory and oc map that is being used to
+    # read and update kubernetes secrets for the terraform resource
     ri, oc_map = fetch_current_state(dry_run, tf_namespaces, thread_pool_size,
                                      internal, use_jump_host, account_name)
+
+    # initialize terrascript (scripting engine to generate terraform manifests)
     ts, working_dirs = init_working_dirs(accounts, thread_pool_size,
                                          oc_map=oc_map,
                                          settings=settings)
+    # initialize terraform client
+    # used to plan and apply according to the output of terrascript
     tf = Terraform(QONTRACT_INTEGRATION,
                    QONTRACT_INTEGRATION_VERSION,
                    QONTRACT_TF_PREFIX,
                    accounts,
                    working_dirs,
                    thread_pool_size)
-    existing_secrets = tf.get_terraform_output_secrets()
-    clusters = [c for c in queries.get_clusters()
-                if c.get('ocm') is not None]
+
+    # place existing secrets from previous tf runs into the resource specs
+    # these are required for certain providers to get access
+    terraform_secrets = tf.get_terraform_output_secrets()
+    for account, secrets in terraform_secrets.items():
+        for output_prefix, data in secrets.items():
+            tf_id = TerraformResourceIdentifier.from_output_prefix_account(output_prefix, account)
+            tf_res_spec = resource_specs.get(tf_id)
+            if tf_res_spec:
+                tf_res_spec.tf_secret = data
+
+    # build oc_map for aws account access
+    clusters = [c for c in queries.get_clusters() if c.get('ocm') is not None]
     if clusters:
         ocm_map = OCMMap(clusters=clusters, integration=QONTRACT_INTEGRATION,
                          settings=settings)
     else:
         ocm_map = None
-    ts.populate_resources(resource_specs, existing_secrets, ocm_map=ocm_map)
+
+    ts.populate_resources(resource_specs, ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
     return ri, oc_map, tf, tf_namespaces, resource_specs
@@ -454,7 +487,7 @@ def detect_tf_resources(namespaces: list[dict[str, Any]], account_name: Optional
     #   accountfilter `account_name`
     # * also adds namespaces without resources when they are are enabled for
     #   tf resource management - this enables handling of the namespaces when
-    #   resources are deleted
+    #   their last resource is being deleted
 
     tf_namespaces: list[dict[str, Any]] = []
     resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec] = {}
@@ -462,9 +495,6 @@ def detect_tf_resources(namespaces: list[dict[str, Any]], account_name: Optional
     for namespace_info in namespaces:
         if not namespace_info.get('managedTerraformResources'):
             continue
-
-        if account_name is None:
-            tf_namespaces.append(account_name)
 
         def init_resource_spec(resource: dict[str, Any], owner_tags: dict[str, str]) -> bool:
           account = resource['account']
@@ -481,21 +511,28 @@ def detect_tf_resources(namespaces: list[dict[str, Any]], account_name: Optional
                     resource=resource,
                     namespaces=[namespace_info],
                     owner_tags=owner_tags,
-                    output_resource_name=resource["output_resource_name"]
+                    output_resource_name=resource.get("output_resource_name")
                   )
               resource_specs[identifier] = resource_spec
           else:
               resource_spec.namespaces.append(namespace_info)
           return True
 
-        valid_resources_found_in_namespace = False
+        # use app (or parent app if available) and environment
+        # as tags for the resources
+        app = namespace_info["app"]["parentApp"]["name"]
+        if not app:
+          app = namespace_info["app"]["name"]
+        environment = namespace_info["environment"]["name"]
 
+        valid_resources_found_in_namespace = False
         for resource in namespace_info.get('terraformResources') or []:
             valid_resources_found_in_namespace |= init_resource_spec(
                 resource,
                 TerraformResourceSpec.build_namespaced_owner_tags(
                     namespace_info["name"],
                     namespace_info["cluster"]["name"],
+                    app, environment,
                     QONTRACT_INTEGRATION
                 )
             )
@@ -506,11 +543,12 @@ def detect_tf_resources(namespaces: list[dict[str, Any]], account_name: Optional
                     resource,
                     TerraformResourceSpec.build_sharedresource_owner_tags(
                       shared_resource.get("name"),
+                      app, environment,
                       QONTRACT_INTEGRATION
                     )
                 )
 
-        if valid_resources_found_in_namespace:
+        if valid_resources_found_in_namespace or account_name is None:
           tf_namespaces.append(namespace_info)
 
     return tf_namespaces, resource_specs
@@ -530,7 +568,7 @@ def write_outputs_to_vault(vault_path: str, ri: ResourceInventory, resource_spec
     vault_client = VaultClient()
     for cluster, namespace, _, data in ri:
         for name, d_item in data['desired'].items():
-            # todo handle write to correct location
+            # todo handle write to correct location - figure out the correct spec for the d_item
             secret_path = \
                 f"{vault_path}/{integration_name}/{cluster}/{namespace}/{name}"
             secret = {'path': secret_path, 'data': d_item.body['data']}

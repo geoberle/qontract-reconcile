@@ -1,6 +1,5 @@
 import base64
-from dataclasses import dataclass
-import hashlib
+from dataclasses import dataclass, field
 import inspect
 import json
 import logging
@@ -14,7 +13,6 @@ from threading import Lock
 
 from typing import Any, Dict, List, Iterable, MutableMapping, Optional
 from ipaddress import ip_network, ip_address
-from xml.dom import NamespaceErr
 
 import anymarkup
 import requests
@@ -84,7 +82,7 @@ from reconcile.utils.aws_api import AWSApi
 from reconcile.utils.secret_reader import SecretReader
 from reconcile.utils.git import is_file_in_git_repo
 from reconcile.github_org import get_config
-from reconcile.utils.oc import OC_Map, StatusCodeError
+from reconcile.utils.oc import OC_Map
 from reconcile.utils.gpg import gpg_key_valid
 from reconcile.utils.exceptions import (FetchResourceError,
                                         PrintToFileInGitRepositoryError)
@@ -121,6 +119,9 @@ class TerraformResourceSpec:
     output_resource_name: Optional[str]
     owner_tags: dict[str, str]
 
+    # the output from a previous tf run
+    tf_secret: Optional[dict[str, str]] = field(init=False)
+
     @property
     def provider(self):
         return self.resource.get("provider")
@@ -128,6 +129,10 @@ class TerraformResourceSpec:
     @property
     def identifier(self):
         return self.resource.get("identifier")
+
+    @property
+    def account(self):
+        return self.resource.get("account")
 
     @property
     def output_prefix(self):
@@ -148,18 +153,28 @@ class TerraformResourceSpec:
     def owning_shared_resource(self):
         return self.owner_tags.get("shared-resource")
 
+    def get_tf_secret_field(self, field):
+        if self.tf_secret and field in self.tf_secret:
+            return self.tf_secret.get(field)
+        else:
+            return None
+
     @staticmethod
-    def build_namespaced_owner_tags(namespace, cluster, integration):
+    def build_namespaced_owner_tags(namespace, cluster, app, env, integration):
         return {
             "namespace": namespace,
             "cluster": cluster,
+            "app": app,
+            "environment": env,
             "managed_by_integration": integration
         }
 
     @staticmethod
-    def build_sharedresource_owner_tags(sharedresource, integration):
+    def build_sharedresource_owner_tags(sharedresource, app, env, integration):
         return {
             "shared-resource": sharedresource,
+            "app": app,
+            "environment": env,
             "managed_by_integration": integration
         }
 
@@ -172,11 +187,20 @@ class TerraformResourceIdentifier:
     account: str
 
     @classmethod
-    def from_dict(cls, env):
+    def from_dict(cls, data):
         return cls(**{
-            k: v for k, v in env.items()
+            k: v for k, v in data.items()
             if k in inspect.signature(cls).parameters
         })
+
+    @staticmethod
+    def from_output_prefix_account(output_prefix, account):
+        identifier, provider = output_prefix.rsplit("-", 1)
+        return TerraformResourceIdentifier(
+            identifier=identifier,
+            provider=provider,
+            account=account
+        )
 
 
 def safe_resource_id(s):
@@ -206,10 +230,9 @@ class time_sleep(Resource):
 
 class TerrascriptClient:
     def __init__(self, integration, integration_prefix,
-                 thread_pool_size, accounts, oc_map=None, settings=None):
+                 thread_pool_size, accounts, settings=None):
         self.integration = integration
         self.integration_prefix = integration_prefix
-        self.oc_map = oc_map
         self.settings = settings
         self.thread_pool_size = thread_pool_size
         filtered_accounts = self.filter_disabled_accounts(accounts)
@@ -903,66 +926,61 @@ class TerrascriptClient:
         return results
 
     def populate_resources(self, resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec],
-                           existing_secrets, ocm_map=None):
+                           ocm_map=None):
         self.account_resources = {}
         for identifier, spec in resource_specs.items():
             self.account_resources.setdefault(identifier.account, {})
             self.account_resources[identifier.account][identifier] = spec
         for account_specs in self.account_resources.values():
             for spec in account_specs.values():
-                self.populate_tf_resources(spec, existing_secrets,
-                                           ocm_map=ocm_map)
+                self.populate_tf_resources(spec, ocm_map=ocm_map)
 
-    def populate_tf_resources(self, populate_spec: TerraformResourceSpec,
-                              existing_secrets, ocm_map: Optional[OC_Map]=None):
-        provider = populate_spec.provider
-        resource = None
-        namespaces = None
+    def populate_tf_resources(self, resource_spec: TerraformResourceSpec,
+                              ocm_map: Optional[OC_Map]=None):
+        provider = resource_spec.provider
         if provider == 'rds':
-            self.populate_tf_resource_rds(populate_spec, existing_secrets)
+            self.populate_tf_resource_rds(resource_spec)
         elif provider == 's3':
-            self.populate_tf_resource_s3(populate_spec)
+            self.populate_tf_resource_s3(resource_spec)
         elif provider == 'elasticache':
-            self.populate_tf_resource_elasticache(populate_spec,
-                                                  existing_secrets)
+            self.populate_tf_resource_elasticache(resource_spec)
         elif provider == 'aws-iam-service-account':
-            self.populate_tf_resource_service_account(populate_spec,
+            self.populate_tf_resource_service_account(resource_spec,
                                                       ocm_map=ocm_map)
         elif provider == 'aws-iam-role':
-            self.populate_tf_resource_role(populate_spec)
+            self.populate_tf_resource_role(resource_spec)
         elif provider == 'sqs':
-            self.populate_tf_resource_sqs(populate_spec)
+            self.populate_tf_resource_sqs(resource_spec)
         elif provider == 'dynamodb':
-            self.populate_tf_resource_dynamodb(populate_spec)
+            self.populate_tf_resource_dynamodb(resource_spec)
         elif provider == 'ecr':
-            self.populate_tf_resource_ecr(populate_spec)
+            self.populate_tf_resource_ecr(resource_spec)
         elif provider == 's3-cloudfront':
-            self.populate_tf_resource_s3_cloudfront(populate_spec)
+            self.populate_tf_resource_s3_cloudfront(resource_spec)
         elif provider == 's3-sqs':
-            self.populate_tf_resource_s3_sqs(populate_spec)
+            self.populate_tf_resource_s3_sqs(resource_spec)
         elif provider == 'cloudwatch':
-            self.populate_tf_resource_cloudwatch(populate_spec)
+            self.populate_tf_resource_cloudwatch(resource_spec)
         elif provider == 'kms':
-            self.populate_tf_resource_kms(populate_spec)
+            self.populate_tf_resource_kms(resource_spec)
         elif provider == 'elasticsearch':
-            self.populate_tf_resource_elasticsearch(populate_spec)
+            self.populate_tf_resource_elasticsearch(resource_spec)
         elif provider == 'acm':
-            self.populate_tf_resource_acm(populate_spec)
+            self.populate_tf_resource_acm(resource_spec)
         elif provider == 'kinesis':
-            self.populate_tf_resource_kinesis(populate_spec)
+            self.populate_tf_resource_kinesis(resource_spec)
         elif provider == 's3-cloudfront-public-key':
-            self.populate_tf_resource_s3_cloudfront_public_key(populate_spec)
+            self.populate_tf_resource_s3_cloudfront_public_key(resource_spec)
         elif provider == 'alb':
-            self.populate_tf_resource_alb(populate_spec, ocm_map=ocm_map)
+            self.populate_tf_resource_alb(resource_spec, ocm_map=ocm_map)
         elif provider == 'secrets-manager':
-            self.populate_tf_resource_secrets_manager(populate_spec)
+            self.populate_tf_resource_secrets_manager(resource_spec)
         elif provider == 'asg':
-            self.populate_tf_resource_asg(populate_spec)
+            self.populate_tf_resource_asg(resource_spec)
         else:
             raise UnknownProviderError(provider)
 
-    def populate_tf_resource_rds(self, resource_spec: TerraformResourceSpec,
-                                 existing_secrets):
+    def populate_tf_resource_rds(self, resource_spec: TerraformResourceSpec):
         account, identifier, values, output_prefix, \
             output_resource_name, annotations = \
             self.init_values(resource_spec)
@@ -1077,22 +1095,14 @@ class TerrascriptClient:
         reset_password_current_value = values.pop('reset_password', None)
         if self._db_needs_auth_(values):
             reset_password = self._should_reset_password(
-                reset_password_current_value,
-                existing_secrets,
-                account,
-                output_prefix
+                reset_password_current_value, resource_spec
             )
             if reset_password:
                 password = self.generate_random_password()
             else:
-                try:
-                    existing_secret = existing_secrets[account][output_prefix]
-                    password = \
-                        existing_secret['db.password']
-                except KeyError:
-                    password = \
-                        self.determine_db_password(namespace_info,
-                                                   output_resource_name)
+                password = resource_spec.get_tf_secret_field("db.password")
+                if not password:
+                    password = self.generate_random_password()
         else:
             password = ""
         values['password'] = password
@@ -1259,22 +1269,16 @@ class TerrascriptClient:
             self.add_resource(account, tf_resource)
 
     @staticmethod
-    def _should_reset_password(current_value, existing_secrets,
-                               account, output_prefix):
+    def _should_reset_password(current_value,
+                               resource_spec: TerraformResourceSpec):
         """
         If the current value (graphql) of reset_password
         is different from the existing value (terraform state)
         password should be reset.
         """
         if current_value:
-            try:
-                existing_secret = existing_secrets[account][output_prefix]
-                existing_value = \
-                    existing_secret['reset_password']
-            except KeyError:
-                existing_value = None
-            if current_value != existing_value:
-                return True
+            existing_value = resource_spec.get_tf_secret_field("reset_password")
+            return current_value != existing_value
         return False
 
     def _multiregion_account_(self, name):
@@ -1324,44 +1328,6 @@ class TerrascriptClient:
         and contain only alphanumeric characters. """
         pattern = r'^[a-zA-Z][a-zA-Z0-9_]+$'
         return re.search(pattern, name) and len(name) < 64
-
-    def determine_db_password(self, namespace_info, output_resource_name,
-                              secret_key='db.password'):
-        existing_oc_resource = \
-            self.fetch_existing_oc_resource(namespace_info,
-                                            output_resource_name)
-        if existing_oc_resource is not None:
-            enc_password = existing_oc_resource['data'].get(secret_key)
-            if enc_password:
-                return base64.b64decode(enc_password).decode('utf-8')
-        return self.generate_random_password()
-
-        # TODO: except KeyError?
-        # a KeyError will indicate that this secret
-        # exists, but the db.password field is missing.
-        # this could indicate that a secret with this
-        # this name is 'taken', or that the secret
-        # was updated manually. at this point, it may
-        # be better to let the exception stop the process.
-        # for now, we assume a happy path, where there is
-        # no competition over secret names, but we should
-        # circle back here at a later point.
-
-    def fetch_existing_oc_resource(self, namespace_info, resource_name):
-        cluster, namespace = self.unpack_namespace_info(namespace_info)
-        try:
-            if not self.oc_map:
-                return None
-            oc = self.oc_map.get(cluster)
-            if not oc:
-                logging.log(level=oc.log_level, msg=oc.message)
-                return None
-            return oc.get(namespace, 'Secret', resource_name)
-        except StatusCodeError as e:
-            if str(e).startswith('Error from server (NotFound):'):
-                msg = 'Secret {} does not exist.'.format(resource_name)
-                logging.debug(msg)
-        return None
 
     @staticmethod
     def generate_random_password(string_length=20):
@@ -1737,8 +1703,7 @@ class TerrascriptClient:
 
         return bucket_tf_resource
 
-    def populate_tf_resource_elasticache(self, resource_spec: TerraformResourceSpec,
-                                         existing_secrets):
+    def populate_tf_resource_elasticache(self, resource_spec: TerraformResourceSpec):
         account, identifier, values, output_prefix, \
             output_resource_name, annotations = \
             self.init_values(resource_spec)
@@ -1778,14 +1743,9 @@ class TerrascriptClient:
             values['parameter_group_name'] = pg_identifier
             values.pop('parameter_group', None)
 
-        try:
-            auth_token = \
-                existing_secrets[account][output_prefix]['db.auth_token']
-        except KeyError:
-            auth_token = \
-                self.determine_db_password(namespace_info,
-                                           output_resource_name,
-                                           secret_key='db.auth_token')
+        auth_token = resource_spec.get_tf_secret_field("db.auth.token")
+        if not auth_token:
+            auth_token = self.generate_random_password
 
         if values.get('transit_encryption_enabled', False):
             values['auth_token'] = auth_token
