@@ -11,6 +11,7 @@ from sretoolbox.utils import threaded
 import reconcile.openshift_base as ob
 
 from reconcile import queries
+from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpec
 from reconcile.utils import gql
 from reconcile.aws_iam_keys import run as disable_keys
 from reconcile.utils.aws_api import AWSApi
@@ -443,12 +444,22 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
             raise ValueError(f"aws account {account_name} is not found")
         extra_labels['shard_key'] = account_name
     settings = queries.get_app_interface_settings()
-    namespaces = gqlapi.query(TF_NAMESPACES_QUERY)['namespaces']
-    tf_namespaces = filter_tf_namespaces(namespaces, account_name)
+
+    # find namespaces with terraform resources and create a spec object
+    # for each resource found
+    tf_namespaces, resource_specs = init_tf_resource_specs(gqlapi.query(TF_NAMESPACES_QUERY)['namespaces'], account_name)
+
+    # create a resource inventory and oc map that is being used to
+    # read and update kubernetes secrets for the terraform resource
     ri, oc_map = fetch_current_state(dry_run, tf_namespaces, thread_pool_size,
                                      internal, use_jump_host, account_name)
+
+    # initialize terrascript (scripting engine to generate terraform manifests)
     ts, working_dirs = init_working_dirs(accounts, thread_pool_size,
                                          settings=settings)
+
+    # initialize terraform client
+    # used to plan and apply according to the output of terrascript
     aws_api = AWSApi(1, accounts, settings=settings, init_users=False)
     tf = Terraform(QONTRACT_INTEGRATION,
                    QONTRACT_INTEGRATION_VERSION,
@@ -472,23 +483,35 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
     return ri, oc_map, tf, tf_namespaces
 
 
-def filter_tf_namespaces(namespaces, account_name):
-    tf_namespaces = []
+def init_tf_resource_specs(namespaces: list[dict[str, Any]], account_name: Optional[str]) -> Tuple[list[dict[str, Any]], dict[TerraformResourceIdentifier, TerraformResourceSpec]]:
+    tf_namespaces: list[dict[str, Any]] = []
+    resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec] = {}
     for namespace_info in namespaces:
         if not namespace_info.get('managedTerraformResources'):
             continue
-        if account_name is None:
-            tf_namespaces.append(namespace_info)
-            continue
         tf_resources = namespace_info.get('terraformResources')
-        if not tf_resources:
-            tf_namespaces.append(namespace_info)
-            continue
+        found_resource_in_ns = False
         for resource in tf_resources:
-            if resource['account'] == account_name:
-                tf_namespaces.append(namespace_info)
-                break
-    return tf_namespaces
+          if account_name is None or resource["account"] == account_name:
+            found_resource_in_ns = True
+            identifier = TerraformResourceIdentifier.from_dict(resource)
+            owner_tags = TerraformResourceSpec.build_namespaced_owner_tags(
+                  namespace_info["name"],
+                  namespace_info["cluster"]["name"],
+                  QONTRACT_INTEGRATION
+              )
+            resource_specs[identifier] = TerraformResourceSpec(
+                resource=resource,
+                namespace=namespace_info,
+                owner_tags=owner_tags,
+                output_resource_name=resource.get("output_resource_name")
+              )
+        if found_resource_in_ns or not tf_resources:
+          # handle the namespace in this integration if
+          # - it has resources that adhere to the optional account_filter
+          # - it has no resources to enable deletion of the last removed resource of a namespace
+          tf_namespaces.append(namespace_info)
+    return tf_namespaces, resource_specs
 
 
 def cleanup_and_exit(tf=None, status=False, working_dirs=None):
