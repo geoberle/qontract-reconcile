@@ -82,6 +82,7 @@ from terrascript.resource import (
 # temporary to create aws_ecrpublic_repository
 from terrascript import Resource
 from sretoolbox.utils import threaded
+from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpec
 
 from reconcile.utils import gql
 from reconcile.utils.aws_api import AWSApi
@@ -899,48 +900,26 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return results
 
-    def populate_resources(self, namespaces: Iterable[Mapping[str, Any]],
+    def populate_resources(self,
+                           resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec],
                            existing_secrets: Mapping[str, Any],
-                           account_name: str,
                            ocm_map: Optional[OCMMap] = None) -> None:
         """
         Populates the terraform configuration from the definitions in app-interface
         (schemas/openshift/terraform-resource-1.yml).
-        :param namespaces: schemas/openshift/namespace-1.yml object
-        :param existing_secrets:
-        :param account_name: AWS account name
+        :param resource_specs: the resource specs to process with terrascript
+        :param existing_secrets: the terraform outputs from the previous run
         :param ocm_map:
         """
-        self.init_populate_specs(namespaces, account_name)
-        for specs in self.account_resources.values():
-            for spec in specs:
-                self.populate_tf_resources(spec, existing_secrets,
-                                           ocm_map=ocm_map)
+        self.resource_specs = resource_specs
+        for spec in self.resource_specs:
+            self.populate_tf_resources(spec, existing_secrets, ocm_map=ocm_map)
 
-    def init_populate_specs(self, namespaces: Iterable[Mapping[str, Any]],
-                            account_name: str) -> None:
-        self.account_resources: dict[str, list[dict[str, Any]]] = {}
-        for namespace_info in namespaces:
-            # Skip if namespace has no terraformResources
-            tf_resources = namespace_info.get('terraformResources')
-            if not tf_resources:
-                continue
-            for resource in tf_resources:
-                populate_spec = {'resource': resource,
-                                 'namespace_info': namespace_info}
-                account = resource['account']
-                # Skip if account_name is specified
-                if account_name and account != account_name:
-                    continue
-                if account not in self.account_resources:
-                    self.account_resources[account] = []
-                self.account_resources[account].append(populate_spec)
-
-    def populate_tf_resources(self, populate_spec, existing_secrets,
-                              ocm_map=None):
-        resource = populate_spec['resource']
-        namespace_info = populate_spec['namespace_info']
-        provider = resource['provider']
+    def populate_tf_resources(self, resource_spec: TerraformResourceSpec,
+                              existing_secrets: Mapping[str, Any],
+                              ocm_map: Optional[OCMMap]=None):
+        provider = resource_spec.provider
+        resource = resource_spec.resource
         if provider == 'rds':
             self.populate_tf_resource_rds(resource, namespace_info,
                                           existing_secrets)
@@ -1317,14 +1296,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                        source: str,
                        provider: str
                        ) -> Optional[Dict[str, Dict[str, Optional[str]]]]:
-        if account not in self.account_resources:
+        res_id = TerraformResourceIdentifier(source, provider, account)
+        spec = self.resource_specs.get(res_id, None)
+        if spec:
+            return spec.resource
+        else:
             return None
-
-        for res in self.account_resources[account]:
-            r = res['resource']
-            if r['identifier'] == source and r['provider'] == provider:
-                return res
-        return None
 
     @staticmethod
     def _region_from_availability_zone(az):
@@ -3245,10 +3222,10 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
         an account-wide resource policy.
         """
         log_group_infos = []
-        for resources in self.account_resources.values():
-            for i in resources:
-                res = i['resource']
-                ns = i['namespace_info']
+        for spec in self.resource_specs.values():
+            if spec.provider == "elasticsearch":
+                res = spec.resource
+                ns = spec.namespace
                 if res.get('provider') != 'elasticsearch':
                     continue
                 # res.get('', []) won't work, as publish_log_types is

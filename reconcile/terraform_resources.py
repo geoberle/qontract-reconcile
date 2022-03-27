@@ -476,8 +476,7 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
                          settings=settings)
     else:
         ocm_map = None
-    ts.populate_resources(tf_namespaces, existing_secrets, account_name,
-                          ocm_map=ocm_map)
+    ts.populate_resources(resource_specs, existing_secrets, ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
     return ri, oc_map, tf, tf_namespaces
