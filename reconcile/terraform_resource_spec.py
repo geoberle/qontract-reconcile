@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 import inspect
+import json
 from typing import Any, Optional
 
 
@@ -45,6 +46,10 @@ class TerraformResourceSpec:
     @property
     def owning_cluster(self):
         return self.owner_tags.get("cluster")
+
+    @property
+    def annotations(self) -> dict[str, Any]:
+        return json.loads(self.resource.get('annotations') or '{}')
 
     @staticmethod
     def build_namespaced_owner_tags(namespace_name: str, cluster_name: str, integration_name: str):

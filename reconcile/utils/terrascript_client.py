@@ -919,66 +919,57 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                               existing_secrets: Mapping[str, Any],
                               ocm_map: Optional[OCMMap]=None):
         provider = resource_spec.provider
-        resource = resource_spec.resource
         if provider == 'rds':
-            self.populate_tf_resource_rds(resource, namespace_info,
-                                          existing_secrets)
+            self.populate_tf_resource_rds(resource_spec, existing_secrets)
         elif provider == 's3':
-            self.populate_tf_resource_s3(resource, namespace_info)
+            self.populate_tf_resource_s3(resource_spec)
         elif provider == 'elasticache':
-            self.populate_tf_resource_elasticache(resource, namespace_info,
-                                                  existing_secrets)
+            self.populate_tf_resource_elasticache(resource_spec, existing_secrets)
         elif provider == 'aws-iam-service-account':
-            self.populate_tf_resource_service_account(resource,
-                                                      namespace_info,
-                                                      ocm_map=ocm_map)
+            self.populate_tf_resource_service_account(resource_spec, ocm_map=ocm_map)
         elif provider == 'aws-iam-role':
-            self.populate_tf_resource_role(resource, namespace_info)
+            self.populate_tf_resource_role(resource_spec)
         elif provider == 'sqs':
-            self.populate_tf_resource_sqs(resource, namespace_info)
+            self.populate_tf_resource_sqs(resource_spec)
         elif provider == 'dynamodb':
-            self.populate_tf_resource_dynamodb(resource, namespace_info)
+            self.populate_tf_resource_dynamodb(resource_spec)
         elif provider == 'ecr':
-            self.populate_tf_resource_ecr(resource, namespace_info)
+            self.populate_tf_resource_ecr(resource_spec)
         elif provider == 's3-cloudfront':
-            self.populate_tf_resource_s3_cloudfront(resource, namespace_info)
+            self.populate_tf_resource_s3_cloudfront(resource_spec)
         elif provider == 's3-sqs':
-            self.populate_tf_resource_s3_sqs(resource, namespace_info)
+            self.populate_tf_resource_s3_sqs(resource_spec)
         elif provider == 'cloudwatch':
-            self.populate_tf_resource_cloudwatch(resource, namespace_info)
+            self.populate_tf_resource_cloudwatch(resource_spec)
         elif provider == 'kms':
-            self.populate_tf_resource_kms(resource, namespace_info)
+            self.populate_tf_resource_kms(resource_spec)
         elif provider == 'elasticsearch':
-            self.populate_tf_resource_elasticsearch(resource, namespace_info)
+            self.populate_tf_resource_elasticsearch(resource_spec)
         elif provider == 'acm':
-            self.populate_tf_resource_acm(resource, namespace_info)
+            self.populate_tf_resource_acm(resource_spec)
         elif provider == 'kinesis':
-            self.populate_tf_resource_kinesis(resource, namespace_info)
+            self.populate_tf_resource_kinesis(resource_spec)
         elif provider == 's3-cloudfront-public-key':
-            self.populate_tf_resource_s3_cloudfront_public_key(resource,
-                                                               namespace_info)
+            self.populate_tf_resource_s3_cloudfront_public_key(resource_spec)
         elif provider == 'alb':
-            self.populate_tf_resource_alb(resource, namespace_info,
-                                          ocm_map=ocm_map)
+            self.populate_tf_resource_alb(resource_spec, ocm_map=ocm_map)
         elif provider == 'secrets-manager':
-            self.populate_tf_resource_secrets_manager(resource, namespace_info)
+            self.populate_tf_resource_secrets_manager(resource_spec)
         elif provider == 'asg':
-            self.populate_tf_resource_asg(resource, namespace_info,
+            self.populate_tf_resource_asg(resource_spec,
                                           existing_secrets)
         elif provider == 'route53-zone':
-            self.populate_tf_resource_route53_zone(resource, namespace_info)
+            self.populate_tf_resource_route53_zone(resource_spec)
         else:
             raise UnknownProviderError(provider)
 
-    def populate_tf_resource_rds(self, resource, namespace_info,
+    def populate_tf_resource_rds(self, resource_spec: TerraformResourceSpec,
                                  existing_secrets):
-        account, identifier, values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # we want to allow an empty name, so we
         # only validate names which are not empty
@@ -1118,19 +1109,17 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                 raise ValueError(
                     "only one of replicate_source_db or replica_source " +
                     "can be defined")
-            source_info = self._find_resource(account, replica_source, 'rds')
-            if source_info:
+            source_resource_spec = self._find_resource(account, replica_source, 'rds')
+            if source_resource_spec:
                 values['backup_retention_period'] = 0
-                deps.append("aws_db_instance." +
-                            source_info['resource']['identifier'])
-                replica_az = source_info.get('availability_zone', None)
+                deps.append("aws_db_instance." + source_resource_spec.identifier)
+                replica_az = source_resource_spec.resource.get('availability_zone', None)
                 if replica_az and len(replica_az) > 1:
                     replica_region = self._region_from_availability_zone(
                         replica_az)
                 else:
                     replica_region = self.default_regions.get(account)
-                _, _, source_values, _, _, _ = self.init_values(
-                    source_info['resource'], source_info['namespace_info'])
+                _, _, source_values, = self.init_values(source_resource_spec)
                 if replica_region == region:
                     # replica is in the same region as source
                     values['replicate_source_db'] = replica_source
@@ -1204,10 +1193,10 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
             if kms_key_id.startswith("arn:"):
                 values['kms_key_id'] = kms_key_id
             else:
-                kms_key = self._find_resource(account, kms_key_id, 'kms')
-                if kms_key:
+                kms_key_spec = self._find_resource(account, kms_key_id, 'kms')
+                if kms_key_spec:
                     kms_res = "aws_kms_key." + \
-                        kms_key['resource']['identifier']
+                        kms_key_spec.identifier
                     values['kms_key_id'] = "${" + kms_res + ".arn}"
                     deps.append(kms_res)
                 else:
@@ -1295,13 +1284,9 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                        account: str,
                        source: str,
                        provider: str
-                       ) -> Optional[Dict[str, Dict[str, Optional[str]]]]:
+                       ) -> Optional[TerraformResourceSpec]:
         res_id = TerraformResourceIdentifier(source, provider, account)
-        spec = self.resource_specs.get(res_id, None)
-        if spec:
-            return spec.resource
-        else:
-            return None
+        return self.resource_specs.get(res_id, None)
 
     @staticmethod
     def _region_from_availability_zone(az):
@@ -1335,14 +1320,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
         return ''.join(random.choice(letters_and_digits)
                        for i in range(string_length))
 
-    def populate_tf_resource_s3(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_s3(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # s3 bucket
         # Terraform resource reference:
@@ -1704,17 +1687,15 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return bucket_tf_resource
 
-    def populate_tf_resource_elasticache(self, resource, namespace_info,
+    def populate_tf_resource_elasticache(self, resource_spec: TerraformResourceSpec,
                                          existing_secrets):
-        account, identifier, values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, values, output_prefix = \
+            self.init_values(resource_spec)
         values.setdefault('replication_group_id', values['identifier'])
         values.pop('identifier', None)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         default_region = self.default_regions.get(account)
         desired_region = values.pop('region', default_region)
@@ -1796,15 +1777,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_service_account(self, resource, namespace_info,
+    def populate_tf_resource_service_account(self, resource_spec: TerraformResourceSpec,
                                              ocm_map=None):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # iam user for bucket
         values = {}
@@ -1888,14 +1867,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_role(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_role(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         assume_role = common_values['assume_role']
         assume_role = {k: v for k, v in assume_role.items() if v is not None}
@@ -1939,15 +1916,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_sqs(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_sqs(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
         uid = self.uids.get(account)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
         region = common_values.get('region') or \
             self.default_regions.get(account)
         specs = common_values.get('specs')
@@ -1998,11 +1973,11 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                     if kms_master_key_id.startswith("arn:"):
                         values['kms_master_key_id'] = kms_master_key_id
                     else:
-                        kms_key = self._find_resource(
+                        kms_key_spec = self._find_resource(
                             account, kms_master_key_id, 'kms')
-                        if kms_key:
+                        if kms_key_spec:
                             kms_res = "aws_kms_key." + \
-                                kms_key['resource']['identifier']
+                                kms_key_spec.identifier
                             values['kms_master_key_id'] = \
                                 "${" + kms_res + ".arn}"
                             values['depends_on'] = [kms_res]
@@ -2090,15 +2065,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_dynamodb(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_dynamodb(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
         uid = self.uids.get(account)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
         region = common_values.get('region') or \
             self.default_regions.get(account)
         specs = common_values.get('specs')
@@ -2173,14 +2146,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_ecr(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_ecr(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # ecr repository
         # Terraform resource reference:
@@ -2275,14 +2246,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_s3_cloudfront(self, resource, namespace_info):
+    def populate_tf_resource_s3_cloudfront(self, resource_spec: TerraformResourceSpec):
         # pylint: disable=unused-variable
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         bucket_tf_resource = \
-            self.populate_tf_resource_s3(resource, namespace_info)
+            self.populate_tf_resource_s3(resource_spec)
 
         tf_resources = []
 
@@ -2370,15 +2340,14 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_s3_sqs(self, resource, namespace_info):
+    def populate_tf_resource_s3_sqs(self, resource_spec: TerraformResourceSpec):
         # pylint: disable=unused-variable
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
         uid = self.uids.get(account)
 
         bucket_tf_resource = \
-            self.populate_tf_resource_s3(resource, namespace_info)
+            self.populate_tf_resource_s3(resource_spec)
 
         region = common_values.get('region') or \
             self.default_regions.get(account)
@@ -2582,14 +2551,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_cloudwatch(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_cloudwatch(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # ecr repository
         # Terraform resource reference:
@@ -2813,14 +2780,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_kms(self, resource, namespace_info):
-        account, identifier, values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_kms(self, resource_spec: TerraformResourceSpec):
+        account, identifier, values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
         values.pop('identifier', None)
 
         # kms customer master key
@@ -2859,14 +2824,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_kinesis(self, resource, namespace_info):
-        account, identifier, values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_kinesis(self, resource_spec: TerraformResourceSpec):
+        account, identifier, values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # pop identifier since we use values and not common_values
         values.pop('identifier', None)
@@ -3049,20 +3012,18 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return working_dirs
 
-    def init_values(self,
-                    resource: Mapping[str, Any],
-                    namespace_info: Mapping[str, Any]
-                    ) -> tuple[str, str, dict, str, str, dict]:
+    def init_values(self, resource_spec: TerraformResourceSpec
+                    ) -> Tuple[str, str, dict, str]:
         """
         Initialize the values of the terraform resource and merge the defaults and
         overrides.
 
-        :param resource: schemas/openshift/terraform-resource-1.yml object
+        :param resource_spec: a spec object wrapping schemas/openshift/terraform-resource-1.yml objects
         :param namespace_info: schemas/openshift/namespace-1.yml object
         """
-        account = resource['account']
-        provider = resource['provider']
-        identifier = resource['identifier']
+        resource = resource_spec.resource
+        account = resource_spec.account
+        identifier = resource_spec.identifier
         defaults_path = resource.get('defaults', None)
         overrides = resource.get('overrides', None)
 
@@ -3070,7 +3031,7 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
         self.aggregate_values(values)
         self.override_values(values, overrides)
         values['identifier'] = identifier
-        values['tags'] = self.get_resource_tags(namespace_info)
+        values['tags'] = resource_spec.owner_tags.copy()
 
         for key in VARIABLE_KEYS:
             val = resource.get(key, None)
@@ -3079,15 +3040,7 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
             if val is not None:
                 values[key] = val
 
-        output_prefix = '{}-{}'.format(identifier, provider)
-        output_resource_name = resource['output_resource_name']
-        if output_resource_name is None:
-            output_resource_name = output_prefix
-
-        annotations = json.loads(resource.get('annotations') or '{}')
-
-        return account, identifier, values, output_prefix, \
-            output_resource_name, annotations
+        return account, identifier, values, resource_spec.output_prefix
 
     @staticmethod
     def aggregate_values(values):
@@ -3111,35 +3064,33 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
         for k, v in data.items():
             values[k] = v
 
-    def init_common_outputs(self, tf_resources, namespace_info,
-                            output_prefix, output_resource_name, annotations):
+    def init_common_outputs(self, resource_spec: TerraformResourceSpec, tf_resources):
         output_format_0_13 = '{}__{}_{}'
-        cluster, namespace = self.unpack_namespace_info(namespace_info)
         # cluster
         output_name_0_13 = output_format_0_13.format(
-            output_prefix, self.integration_prefix, 'cluster')
-        output_value = cluster
+            resource_spec.output_prefix, self.integration_prefix, 'cluster')
+        output_value = resource_spec.cluster_name
         tf_resources.append(Output(output_name_0_13, value=output_value))
         # namespace
         output_name_0_13 = output_format_0_13.format(
-            output_prefix, self.integration_prefix, 'namespace')
-        output_value = namespace
+            resource_spec.output_prefix, self.integration_prefix, 'namespace')
+        output_value = resource_spec.namespace_name
         tf_resources.append(Output(output_name_0_13, value=output_value))
         # resource
         output_name_0_13 = output_format_0_13.format(
-            output_prefix, self.integration_prefix, 'resource')
+            resource_spec.output_prefix, self.integration_prefix, 'resource')
         output_value = 'Secret'
         tf_resources.append(Output(output_name_0_13, value=output_value))
         # output_resource_name
         output_name_0_13 = output_format_0_13.format(
-            output_prefix, self.integration_prefix, 'output_resource_name')
-        output_value = output_resource_name
+            resource_spec.output_prefix, self.integration_prefix, 'output_resource_name')
+        output_value = resource_spec.output_resource_name
         tf_resources.append(Output(output_name_0_13, value=output_value))
         # annotations
-        if annotations:
+        if resource_spec.annotations:
             output_name_0_13 = output_format_0_13.format(
-                output_prefix, self.integration_prefix, 'annotations')
-            anno_json = json.dumps(annotations).encode("utf-8")
+                resource_spec.output_prefix, self.integration_prefix, 'annotations')
+            anno_json = json.dumps(resource_spec.annotations).encode("utf-8")
             output_value = base64.b64encode(anno_json).decode()
             tf_resources.append(Output(output_name_0_13, value=output_value))
 
@@ -3165,20 +3116,6 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
             e_msg = "Could not parse data. Skipping resource: {}"
             raise FetchResourceError(e_msg.format(path))
         return values
-
-    def get_resource_tags(self, namespace_info):
-        cluster, namespace = self.unpack_namespace_info(namespace_info)
-        return {
-            'managed_by_integration': self.integration,
-            'cluster': cluster,
-            'namespace': namespace
-        }
-
-    @staticmethod
-    def unpack_namespace_info(namespace_info):
-        cluster = namespace_info['cluster']['name']
-        namespace = namespace_info['name']
-        return cluster, namespace
 
     @staticmethod
     def get_dependencies(tf_resources: Iterable[Resource]
@@ -3364,16 +3301,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return tf_resources, publishing_options
 
-    def populate_tf_resource_elasticsearch(self, resource, namespace_info):
-
-        account, identifier, values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_elasticsearch(self, resource_spec: TerraformResourceSpec):
+        account, identifier, values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
 
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         if not self.is_elasticsearch_domain_name_valid(values['identifier']):
             raise ElasticSearchResourceNameInvalidError(
@@ -3392,7 +3326,7 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
             self._get_tf_resource_elasticsearch_log_groups(
                 identifier=identifier,
                 account=account,
-                resource=resource,
+                resource=resource_spec.resource,
                 values=values,
                 output_prefix=output_prefix
             )
@@ -3597,14 +3531,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return advanced_security_options
 
-    def populate_tf_resource_acm(self, resource, namespace_info):
-        account, identifier, common_values, \
-            output_prefix, output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_acm(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         values = {}
         secret = common_values.get('secret', None)
@@ -3681,15 +3613,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_s3_cloudfront_public_key(self, resource,
-                                                      namespace_info):
-        account, identifier, common_values, \
-            output_prefix, output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_s3_cloudfront_public_key(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         values = {'name': identifier, 'comment': 'managed by app-interface'}
         secret = common_values.get('secret', None)
@@ -3760,14 +3689,15 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         return ips
 
-    def populate_tf_resource_alb(self, resource, namespace_info,
+    def populate_tf_resource_alb(self, resource_spec: TerraformResourceSpec,
                                  ocm_map=None):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
+
+        resource = resource_spec.resource
+        namespace_info = resource_spec.namespace
 
         default_region = self.default_regions.get(account)
         cluster_region = namespace_info['cluster']['spec']['region']
@@ -4054,14 +3984,12 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_secrets_manager(self, resource, namespace_info):
-        account, identifier, common_values, \
-            output_prefix, output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_secrets_manager(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         values = {
             "name": identifier
@@ -4152,16 +4080,13 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                 return True
         return False
 
-    def populate_tf_resource_asg(self, resource: dict,
-                                 namespace_info: dict,
+    def populate_tf_resource_asg(self, resource_spec: TerraformResourceSpec,
                                  existing_secrets: dict) -> None:
-        account, identifier, common_values, \
-            output_prefix, output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
 
         tf_resources: List[Any] = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         tags = common_values['tags']
         tags['Name'] = identifier
@@ -4307,13 +4232,11 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
 
         self.add_resources(account, tf_resources)
 
-    def populate_tf_resource_route53_zone(self, resource, namespace_info):
-        account, identifier, common_values, output_prefix, \
-            output_resource_name, annotations = \
-            self.init_values(resource, namespace_info)
+    def populate_tf_resource_route53_zone(self, resource_spec: TerraformResourceSpec):
+        account, identifier, common_values, output_prefix = \
+            self.init_values(resource_spec)
         tf_resources = []
-        self.init_common_outputs(tf_resources, namespace_info, output_prefix,
-                                 output_resource_name, annotations)
+        self.init_common_outputs(resource_spec, tf_resources)
 
         # https://www.terraform.io/docs/providers/aws/r/route53_zone.html
         values = {
