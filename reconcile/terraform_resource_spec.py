@@ -12,6 +12,9 @@ class TerraformResourceSpec:
     output_resource_name: Optional[str]
     owner_tags: dict[str, str]
 
+    # the output from a previous tf run
+    tf_secret: Optional[dict[str, str]] = field(init=False)
+
     @property
     def provider(self):
         return self.resource.get("provider")
@@ -50,6 +53,12 @@ class TerraformResourceSpec:
     @property
     def annotations(self) -> dict[str, Any]:
         return json.loads(self.resource.get('annotations') or '{}')
+
+    def get_tf_secret_field(self, field: str):
+        if self.tf_secret:
+            return self.tf_secret.get(field, None)
+        else:
+            return None
 
     @staticmethod
     def build_namespaced_owner_tags(namespace_name: str, cluster_name: str, integration_name: str):

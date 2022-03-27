@@ -471,12 +471,23 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
     existing_secrets = tf.get_terraform_output_secrets()
     clusters = [c for c in queries.get_clusters()
                 if c.get('ocm') is not None]
+
+    # place existing secrets from previous tf runs into the resource specs
+    # these are required for certain providers to get access
+    for account, secrets in existing_secrets.items():
+        for output_prefix, data in secrets.items():
+            tf_id = TerraformResourceIdentifier.from_output_prefix_account(output_prefix, account)
+            tf_res_spec = resource_specs.get(tf_id)
+            if tf_res_spec:
+                tf_res_spec.tf_secret = data
+
+    # build oc_map for aws account access
     if clusters:
         ocm_map = OCMMap(clusters=clusters, integration=QONTRACT_INTEGRATION,
                          settings=settings)
     else:
         ocm_map = None
-    ts.populate_resources(resource_specs, existing_secrets, ocm_map=ocm_map)
+    ts.populate_resources(resource_specs, ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
     return ri, oc_map, tf, tf_namespaces
