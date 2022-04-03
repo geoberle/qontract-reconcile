@@ -14,12 +14,14 @@ from python_terraform import Terraform, IsFlagged, TerraformCommandError
 from ruamel import yaml
 from sretoolbox.utils import retry
 from sretoolbox.utils import threaded
+from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpecDict
 
 import reconcile.utils.lean_terraform_client as lean_tf
 
 from reconcile.utils import gql
 from reconcile.utils.aws_api import AWSApi
-from reconcile.utils.openshift_resource import OpenshiftResource as OR
+from reconcile.utils.oc import OC_Map
+from reconcile.utils.openshift_resource import OpenshiftResource as OR, ResourceInventory
 
 ALLOWED_TF_SHOW_FORMAT_VERSION = "0.1"
 DATE_FORMAT = '%Y-%m-%d'
@@ -339,7 +341,7 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
 
         return data
 
-    def populate_desired_state(self, ri, oc_map, tf_namespaces, account_name):
+    def populate_desired_state(self, ri: ResourceInventory, oc_map: OC_Map, tf_namespaces: list[dict[str, Any]], account_name: str, resource_specs: TerraformResourceSpecDict):
         self.init_outputs()  # get updated output
 
         # Dealing with credentials for RDS replicas
@@ -377,8 +379,13 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
                 annotations = data.get('{}_annotations'.format(
                     self.integration_prefix))
 
+                resource_spec = resource_specs.get(TerraformResourceIdentifier.from_output_prefix(name))
+                if resource_spec:
+                    formatted_data = resource_spec.output_format.render(data)
+                else:
+                    formatted_data = data
                 oc_resource = \
-                    self.construct_oc_resource(output_resource_name, data,
+                    self.construct_oc_resource(output_resource_name, formatted_data,
                                                account, annotations)
                 ri.add_desired(
                     cluster,
@@ -511,7 +518,7 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
             return data[list(data.keys())[0]]
         return data
 
-    def construct_oc_resource(self, name, data, account, annotations):
+    def construct_oc_resource(self, name, data, account, annotations, ):
         body = {
             "apiVersion": "v1",
             "kind": "Secret",

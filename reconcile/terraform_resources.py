@@ -3,7 +3,7 @@ import shutil
 import sys
 
 from textwrap import indent
-from typing import Any, Optional, Mapping
+from typing import Any, Optional, Mapping, Tuple
 
 from sretoolbox.utils import threaded
 
@@ -11,7 +11,7 @@ from sretoolbox.utils import threaded
 import reconcile.openshift_base as ob
 
 from reconcile import queries
-from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpec
+from reconcile.terraform_resource_spec import TerraformResourceSpecDict, TerraformResourceIdentifier, TerraformResourceSpec
 from reconcile.utils import gql
 from reconcile.aws_iam_keys import run as disable_keys
 from reconcile.utils.aws_api import AWSApi
@@ -434,7 +434,7 @@ def init_working_dirs(accounts: list[dict[str, Any]],
 
 
 def setup(dry_run, print_to_file, thread_pool_size, internal,
-          use_jump_host, account_name, extra_labels):
+          use_jump_host, account_name, extra_labels) -> Tuple[ResourceInventory, OC_Map, Terraform, list[dict[str, Any]], TerraformResourceSpecDict]:
     gqlapi = gql.get_api()
     accounts = queries.get_aws_accounts()
     if account_name:
@@ -480,37 +480,30 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
                           ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
-    return ri, oc_map, tf, tf_namespaces
+    return ri, oc_map, tf, tf_namespaces, resource_specs
 
 
-def init_tf_resource_specs(namespaces: list[dict[str, Any]], account_name: Optional[str]) -> Tuple[list[dict[str, Any]], dict[TerraformResourceIdentifier, TerraformResourceSpec]]:
+def init_tf_resource_specs(namespaces: list[dict[str, Any]], account_name: Optional[str]) -> Tuple[list[dict[str, Any]], TerraformResourceSpecDict]:
     tf_namespaces: list[dict[str, Any]] = []
-    resource_specs: dict[TerraformResourceIdentifier, TerraformResourceSpec] = {}
+    resource_specs: TerraformResourceSpecDict = {}
     for namespace_info in namespaces:
         if not namespace_info.get('managedTerraformResources'):
             continue
-        tf_resources = namespace_info.get('terraformResources')
+        tf_resources = namespace_info.get('terraformResources') or []
         found_resource_in_ns = False
         for resource in tf_resources:
-          if account_name is None or resource["account"] == account_name:
-            found_resource_in_ns = True
-            identifier = TerraformResourceIdentifier.from_dict(resource)
-            owner_tags = TerraformResourceSpec.build_namespaced_owner_tags(
-                  namespace_info["name"],
-                  namespace_info["cluster"]["name"],
-                  QONTRACT_INTEGRATION
-              )
-            resource_specs[identifier] = TerraformResourceSpec(
-                resource=resource,
-                namespace=namespace_info,
-                owner_tags=owner_tags,
-                output_resource_name=resource.get("output_resource_name")
-              )
+            if account_name is None or resource["account"] == account_name:
+                found_resource_in_ns = True
+                identifier = TerraformResourceIdentifier.from_dict(resource)
+                resource_specs[identifier] = TerraformResourceSpec(
+                    resource=resource,
+                    namespace=namespace_info,
+                )
         if found_resource_in_ns or not tf_resources:
-          # handle the namespace in this integration if
-          # - it has resources that adhere to the optional account_filter
-          # - it has no resources to enable deletion of the last removed resource of a namespace
-          tf_namespaces.append(namespace_info)
+            # handle the namespace in this integration if
+            # - it has resources that adhere to the optional account_filter
+            # - it has no resources to enable deletion of the last removed resource of a namespace
+            tf_namespaces.append(namespace_info)
     return tf_namespaces, resource_specs
 
 
@@ -543,7 +536,7 @@ def run(dry_run, print_to_file=None,
         light=False, vault_output_path='',
         account_name=None, extra_labels=None, defer=None):
 
-    ri, oc_map, tf, tf_namespaces = \
+    ri, oc_map, tf, tf_namespaces, resource_specs = \
         setup(dry_run, print_to_file, thread_pool_size, internal,
               use_jump_host, account_name, extra_labels)
 
@@ -572,7 +565,7 @@ def run(dry_run, print_to_file=None,
         if err:
             cleanup_and_exit(tf, err)
 
-    tf.populate_desired_state(ri, oc_map, tf_namespaces, account_name)
+    tf.populate_desired_state(ri, oc_map, tf_namespaces, account_name, resource_specs)
 
     actions = ob.realize_data(dry_run, oc_map, ri, thread_pool_size,
                               caller=account_name)

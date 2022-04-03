@@ -1,6 +1,44 @@
-from dataclasses import dataclass, field
-import inspect
-from typing import Any, Optional
+from abc import abstractmethod
+from pydantic.dataclasses import dataclass
+from typing import Any, Optional, cast
+import yaml
+from reconcile import openshift_resources_base as orb
+
+
+class OutputFormatProcessor:
+    @abstractmethod
+    def render(self, vars: dict[str, str]) -> dict[str, str]:
+        return {}
+
+
+@dataclass
+class GenericSecretOutputFormatConfig(OutputFormatProcessor):
+
+    data: Optional[str] = None
+
+    def render(self, vars: dict[str, str]) -> dict[str, str]:
+        if self.data:
+            rendered_data = orb.process_jinja2_template(self.data, vars)
+            return yaml.safe_load(rendered_data)
+        else:
+            return vars
+
+
+@dataclass
+class OutputFormat:
+
+    provider: str
+    data: Optional[str] = None
+
+    def _formatter(self) -> OutputFormatProcessor:
+        if self.provider == "generic-secret":
+            return GenericSecretOutputFormatConfig(data=self.data)
+        else:
+            # default to generic-secret as provider for backwards compatibility
+            return GenericSecretOutputFormatConfig()
+
+    def render(self, vars: dict[str, str]) -> dict[str, str]:
+        return self._formatter().render(vars)
 
 
 @dataclass
@@ -8,8 +46,6 @@ class TerraformResourceSpec:
 
     resource: dict[str, Any]
     namespace: dict[str, Any]
-    output_resource_name: Optional[str]
-    owner_tags: dict[str, str]
 
     @property
     def provider(self):
@@ -35,24 +71,18 @@ class TerraformResourceSpec:
     def output_prefix(self):
         return f"{self.identifier}-{self.provider}"
 
-    def get_output_resource_name(self):
-        return self.output_resource_name or self.output_prefix
+    @property
+    def output_resource_name(self):
+        return self.resource.get("output_resource_name") or self.output_prefix
 
     @property
-    def owning_namespace(self):
-        return self.owner_tags.get("namespace")
-
-    @property
-    def owning_cluster(self):
-        return self.owner_tags.get("cluster")
-
-    @staticmethod
-    def build_namespaced_owner_tags(namespace_name: str, cluster_name: str, integration_name: str):
-        return {
-            "namespace": namespace_name,
-            "cluster": cluster_name,
-            "managed_by_integration": integration_name
-        }
+    def output_format(self) -> OutputFormat:
+        if self.resource.get("output_format") is not None:
+            return OutputFormat(
+                **cast(dict[str, Any], self.resource.get("output_format"))
+            )
+        else:
+            return OutputFormat(provider="generic-secret")
 
 
 @dataclass(frozen=True)
@@ -60,20 +90,25 @@ class TerraformResourceIdentifier:
 
     identifier: str
     provider: str
-    account: str
-
-    @classmethod
-    def from_dict(cls, data):
-        return cls(**{
-            k: v for k, v in data.items()
-            if k in inspect.signature(cls).parameters
-        })
 
     @staticmethod
-    def from_output_prefix_account(output_prefix, account):
+    def from_dict(data: dict[str, Any]) -> "TerraformResourceIdentifier":
+        if "identifier" not in data or "provider" not in data:
+            raise ValueError(
+                "dict does not include required both keys 'identifier' and 'provider'"
+            )
+        return TerraformResourceIdentifier(
+            identifier=cast(str, data["identifier"]),
+            provider=cast(str, data["provider"]),
+        )
+
+    @staticmethod
+    def from_output_prefix(output_prefix: str) -> "TerraformResourceIdentifier":
         identifier, provider = output_prefix.rsplit("-", 1)
         return TerraformResourceIdentifier(
             identifier=identifier,
             provider=provider,
-            account=account
         )
+
+
+TerraformResourceSpecDict = dict[TerraformResourceIdentifier, TerraformResourceSpec]
