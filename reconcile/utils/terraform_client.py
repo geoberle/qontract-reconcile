@@ -14,7 +14,7 @@ from python_terraform import Terraform, IsFlagged, TerraformCommandError
 from ruamel import yaml
 from sretoolbox.utils import retry
 from sretoolbox.utils import threaded
-from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpecDict
+from reconcile.terraform_resource_spec import TerraformResourceIdentifier, TerraformResourceSpec, TerraformResourceSpecDict
 
 import reconcile.utils.lean_terraform_client as lean_tf
 
@@ -341,11 +341,11 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
 
         return data
 
-    def populate_desired_state(self, ri: ResourceInventory, oc_map: OC_Map, tf_namespaces: list[dict[str, Any]], account_name: str, resource_specs: TerraformResourceSpecDict):
+    def populate_desired_state(self, ri: ResourceInventory, oc_map: OC_Map, account_name: str, resource_specs: TerraformResourceSpecDict):
         self.init_outputs()  # get updated output
 
         # Dealing with credentials for RDS replicas
-        replicas_info = self.get_replicas_info(namespaces=tf_namespaces)
+        replicas_info = self.get_replicas_info(resource_specs.values())
 
         for account, output in self.outputs.items():
             if account_name and account != account_name:
@@ -379,7 +379,7 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
                 annotations = data.get('{}_annotations'.format(
                     self.integration_prefix))
 
-                resource_spec = resource_specs.get(TerraformResourceIdentifier.from_output_prefix(name))
+                resource_spec = resource_specs.get(TerraformResourceIdentifier.from_output_prefix(name, account))
                 if resource_spec:
                     formatted_data = resource_spec.output_format.render(data)
                 else:
@@ -396,62 +396,58 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
                 )
 
     @staticmethod
-    def get_replicas_info(namespaces):
+    def get_replicas_info(resource_specs: Iterable[TerraformResourceSpec]):
         replicas_info = defaultdict(dict)
 
-        for tf_namespace in namespaces:
-            tf_resources = tf_namespace.get('terraformResources')
-            if tf_resources is None:
+        for spec in resource_specs:
+            tf_resource = spec.resource
+            # First, we have to find the terraform resources
+            # that have a replica_source defined in app-interface
+            replica_src = tf_resource.get('replica_source')
+
+            if replica_src is None:
+                # When replica_source is not there, we look for
+                # replicate_source_db in the defaults
+                replica_src_db = None
+                defaults_ref = tf_resource.get('defaults')
+                if defaults_ref is not None:
+                    defaults_res = gql.get_resource(
+                        defaults_ref
+                    )
+                    defaults = yaml.safe_load(defaults_res['content'])
+                    replica_src_db = defaults.get('replicate_source_db')
+
+                # Also, we look for replicate_source_db in the overrides
+                override_replica_src_db = None
+                overrides = tf_resource.get('overrides')
+                if overrides is not None:
+                    override_replica_src_db = json.loads(overrides).get(
+                        'replicate_source_db'
+                    )
+                if override_replica_src_db is not None:
+                    replica_src_db = override_replica_src_db
+
+                # Getting whatever we probed here
+                replica_src = replica_src_db
+
+            if replica_src is None:
+                # No replica source information anywhere
                 continue
 
-            for tf_resource in tf_namespace['terraformResources']:
-                # First, we have to find the terraform resources
-                # that have a replica_source defined in app-interface
-                replica_src = tf_resource.get('replica_source')
+            # The replica name, as found in the
+            # self.format_output()
+            replica_name = (f'{tf_resource.get("identifier")}-'
+                            f'{tf_resource.get("provider")}')
 
-                if replica_src is None:
-                    # When replica_source is not there, we look for
-                    # replicate_source_db in the defaults
-                    replica_src_db = None
-                    defaults_ref = tf_resource.get('defaults')
-                    if defaults_ref is not None:
-                        defaults_res = gql.get_resource(
-                            defaults_ref
-                        )
-                        defaults = yaml.safe_load(defaults_res['content'])
-                        replica_src_db = defaults.get('replicate_source_db')
+            # The replica source name, as found in the
+            # self.format_output()
+            replica_source_name = (f'{replica_src}-'
+                                    f'{tf_resource.get("provider")}')
 
-                    # Also, we look for replicate_source_db in the overrides
-                    override_replica_src_db = None
-                    overrides = tf_resource.get('overrides')
-                    if overrides is not None:
-                        override_replica_src_db = json.loads(overrides).get(
-                            'replicate_source_db'
-                        )
-                    if override_replica_src_db is not None:
-                        replica_src_db = override_replica_src_db
-
-                    # Getting whatever we probed here
-                    replica_src = replica_src_db
-
-                if replica_src is None:
-                    # No replica source information anywhere
-                    continue
-
-                # The replica name, as found in the
-                # self.format_output()
-                replica_name = (f'{tf_resource.get("identifier")}-'
-                                f'{tf_resource.get("provider")}')
-
-                # The replica source name, as found in the
-                # self.format_output()
-                replica_source_name = (f'{replica_src}-'
-                                       f'{tf_resource.get("provider")}')
-
-                # Creating a dict that is convenient to use inside the
-                # loop processing the formatted_output
-                tf_account = tf_resource.get('account')
-                replicas_info[tf_account][replica_name] = replica_source_name
+            # Creating a dict that is convenient to use inside the
+            # loop processing the formatted_output
+            tf_account = tf_resource.get('account')
+            replicas_info[tf_account][replica_name] = replica_source_name
 
         return replicas_info
 
@@ -518,7 +514,7 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
             return data[list(data.keys())[0]]
         return data
 
-    def construct_oc_resource(self, name, data, account, annotations, ):
+    def construct_oc_resource(self, name, data, account, annotations):
         body = {
             "apiVersion": "v1",
             "kind": "Secret",

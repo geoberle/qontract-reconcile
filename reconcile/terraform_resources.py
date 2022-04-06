@@ -27,6 +27,12 @@ from reconcile.utils.vault import VaultClient
 
 
 TF_RESOURCE = """
+output_format {
+  provider
+  ... on NamespaceTerraformResourceGenericSecretOutputFormat_v1 {
+    data
+  }
+}
 provider
 ... on NamespaceTerraformResourceRDS_v1 {
   account
@@ -434,7 +440,7 @@ def init_working_dirs(accounts: list[dict[str, Any]],
 
 
 def setup(dry_run, print_to_file, thread_pool_size, internal,
-          use_jump_host, account_name, extra_labels) -> Tuple[ResourceInventory, OC_Map, Terraform, list[dict[str, Any]], TerraformResourceSpecDict]:
+          use_jump_host, account_name, extra_labels) -> Tuple[ResourceInventory, OC_Map, Terraform, TerraformResourceSpecDict]:
     gqlapi = gql.get_api()
     accounts = queries.get_aws_accounts()
     if account_name:
@@ -480,7 +486,7 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
                           ocm_map=ocm_map)
     ts.dump(print_to_file, existing_dirs=working_dirs)
 
-    return ri, oc_map, tf, tf_namespaces, resource_specs
+    return ri, oc_map, tf, resource_specs
 
 
 def init_tf_resource_specs(namespaces: list[dict[str, Any]], account_name: Optional[str]) -> Tuple[list[dict[str, Any]], TerraformResourceSpecDict]:
@@ -536,7 +542,7 @@ def run(dry_run, print_to_file=None,
         light=False, vault_output_path='',
         account_name=None, extra_labels=None, defer=None):
 
-    ri, oc_map, tf, tf_namespaces, resource_specs = \
+    ri, oc_map, tf, resource_specs = \
         setup(dry_run, print_to_file, thread_pool_size, internal,
               use_jump_host, account_name, extra_labels)
 
@@ -565,7 +571,7 @@ def run(dry_run, print_to_file=None,
         if err:
             cleanup_and_exit(tf, err)
 
-    tf.populate_desired_state(ri, oc_map, tf_namespaces, account_name, resource_specs)
+    tf.populate_desired_state(ri, oc_map, account_name, resource_specs)
 
     actions = ob.realize_data(dry_run, oc_map, ri, thread_pool_size,
                               caller=account_name)
@@ -575,6 +581,8 @@ def run(dry_run, print_to_file=None,
                  account_name=account_name)
 
     if actions and vault_output_path:
+        # ri can not be used because the content is formatted
+        # by the formatter
         write_outputs_to_vault(vault_output_path, ri)
 
     if ri.has_error_registered():

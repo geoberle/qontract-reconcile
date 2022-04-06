@@ -1,6 +1,7 @@
 from unittest.mock import create_autospec
 
 import pytest
+from reconcile.terraform_resource_spec import TerraformResourceSpec
 
 import reconcile.utils.terraform_client as tfclient
 from reconcile.utils.aws_api import AWSApi
@@ -60,18 +61,19 @@ def test_expiration_value_error(aws_api):
 
 
 def test_get_replicas_info_via_replica_source():
-    namespace = {
-        "terraformResources": [
-            {
+    resource_specs = [
+        TerraformResourceSpec(
+            resource={
                 "account": "acc",
                 "identifier": "replica-id",
                 "provider": "rds",
                 "defaults": "defaults-ref",
                 "replica_source": "replica-source-id",
-            }
-        ]
-    }
-    result = tfclient.TerraformClient.get_replicas_info([namespace])
+            },
+            namespace={}
+        )
+    ]
+    result = tfclient.TerraformClient.get_replicas_info(resource_specs)
     expected = {"acc": {"replica-id-rds": "replica-source-id-rds"}}
     assert result == expected
 
@@ -79,19 +81,20 @@ def test_get_replicas_info_via_replica_source():
 def test_get_replicas_info_via_replica_source_overrides_present():
     # this test shows that the direct replica_source on the tf resource
     # has precendence over overrides
-    namespace = {
-        "terraformResources": [
-            {
+    resource_specs = [
+        TerraformResourceSpec(
+            resource={
                 "account": "acc",
                 "identifier": "replica-id",
                 "provider": "rds",
                 "defaults": "defaults-ref",
                 "replica_source": "replica-source-id",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
-            }
-        ]
-    }
-    result = tfclient.TerraformClient.get_replicas_info([namespace])
+            },
+            namespace={}
+        )
+    ]
+    result = tfclient.TerraformClient.get_replicas_info(resource_specs)
     expected = {"acc": {"replica-id-rds": "replica-source-id-rds"}}
     assert result == expected
 
@@ -100,34 +103,36 @@ def test_get_replicas_info_via_defaults(mocker):
     # this test makes sure loading replica source info from defaults works
     gql_mock = mocker.patch.object(gql, "get_resource")
     gql_mock.return_value = {"content": '{"replicate_source_db": "replica-source-id"}'}
-    namespace = {
-        "terraformResources": [
-            {
+    resource_specs = [
+        TerraformResourceSpec(
+            resource={
                 "account": "acc",
                 "identifier": "replica-id",
                 "provider": "rds",
                 "defaults": "defaults-ref",
-            }
-        ]
-    }
-    result = tfclient.TerraformClient.get_replicas_info([namespace])
+            },
+            namespace={}
+        )
+    ]
+    result = tfclient.TerraformClient.get_replicas_info(resource_specs)
     expected = {"acc": {"replica-id-rds": "replica-source-id-rds"}}
     assert result == expected
 
 
 def test_get_replicas_info_via_overrides():
     # this test makes sure loading replica source info from overrides works
-    namespace = {
-        "terraformResources": [
-            {
+    resource_specs = [
+        TerraformResourceSpec(
+            resource={
                 "account": "acc",
                 "identifier": "replica-id",
                 "provider": "rds",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
-            }
-        ]
-    }
-    result = tfclient.TerraformClient.get_replicas_info([namespace])
+            },
+            namespace={}
+        )
+    ]
+    result = tfclient.TerraformClient.get_replicas_info(resource_specs)
     expected = {"acc": {"replica-id-rds": "replica-source-id-from-override-rds"}}
     assert result == expected
 
@@ -138,18 +143,18 @@ def test_get_replicas_info_via_overrides_with_defaults_present(mocker):
     gql_mock.return_value = {
         "content": '{"replicate_source_db": "replica-source-id-from-defaults"}'
     }
-
-    namespace = {
-        "terraformResources": [
-            {
+    resource_specs = [
+        TerraformResourceSpec(
+            resource={
                 "account": "acc",
                 "identifier": "replica-id",
                 "provider": "rds",
                 "defaults": "defaults-ref",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
-            }
-        ]
-    }
-    result = tfclient.TerraformClient.get_replicas_info([namespace])
+            },
+            namespace={}
+        )
+    ]
+    result = tfclient.TerraformClient.get_replicas_info(resource_specs)
     expected = {"acc": {"replica-id-rds": "replica-source-id-from-override-rds"}}
     assert result == expected

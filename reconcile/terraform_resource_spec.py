@@ -90,6 +90,7 @@ class TerraformResourceIdentifier:
 
     identifier: str
     provider: str
+    account: str
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "TerraformResourceIdentifier":
@@ -100,14 +101,16 @@ class TerraformResourceIdentifier:
         return TerraformResourceIdentifier(
             identifier=cast(str, data["identifier"]),
             provider=cast(str, data["provider"]),
+            account=cast(str, data["account"]),
         )
 
     @staticmethod
-    def from_output_prefix(output_prefix: str) -> "TerraformResourceIdentifier":
+    def from_output_prefix(output_prefix: str, account: str) -> "TerraformResourceIdentifier":
         identifier, provider = output_prefix.rsplit("-", 1)
         return TerraformResourceIdentifier(
             identifier=identifier,
             provider=provider,
+            account=account,
         )
 
 
