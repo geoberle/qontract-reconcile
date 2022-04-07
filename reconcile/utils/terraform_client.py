@@ -378,20 +378,21 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
         )
 
         for spec in resource_specs.values():
-            oc_resource = \
-                self.construct_oc_resource(
+            if ri.is_cluster_present(spec.cluster_name):
+                oc_resource = \
+                    self.construct_oc_resource(
+                        name=spec.output_resource_name,
+                        data=spec.render_output_secret(),
+                        account=spec.account,
+                        annotations=spec.annotations,
+                    )
+                ri.add_desired(
+                    cluster=spec.cluster_name,
+                    namespace=spec.namespace_name,
+                    resource_type=oc_resource.kind,
                     name=spec.output_resource_name,
-                    data=spec.render_output_secret(),
-                    account=spec.account,
-                    annotations=spec.annotations,
+                    value=oc_resource
                 )
-            ri.add_desired(
-                cluster=spec.cluster_name,
-                namespace=spec.namespace_name,
-                resource_type=oc_resource.kind,
-                name=spec.output_resource_name,
-                value=oc_resource
-            )
 
     @staticmethod
     def get_replicas_info(resource_specs: Iterable[TerraformResourceSpec]):
