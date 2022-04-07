@@ -70,7 +70,7 @@ def test_get_replicas_info_via_replica_source():
                 "defaults": "defaults-ref",
                 "replica_source": "replica-source-id",
             },
-            namespace={}
+            namespace={},
         )
     ]
     result = tfclient.TerraformClient.get_replicas_info(resource_specs)
@@ -91,7 +91,7 @@ def test_get_replicas_info_via_replica_source_overrides_present():
                 "replica_source": "replica-source-id",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
             },
-            namespace={}
+            namespace={},
         )
     ]
     result = tfclient.TerraformClient.get_replicas_info(resource_specs)
@@ -111,7 +111,7 @@ def test_get_replicas_info_via_defaults(mocker):
                 "provider": "rds",
                 "defaults": "defaults-ref",
             },
-            namespace={}
+            namespace={},
         )
     ]
     result = tfclient.TerraformClient.get_replicas_info(resource_specs)
@@ -129,7 +129,7 @@ def test_get_replicas_info_via_overrides():
                 "provider": "rds",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
             },
-            namespace={}
+            namespace={},
         )
     ]
     result = tfclient.TerraformClient.get_replicas_info(resource_specs)
@@ -152,7 +152,7 @@ def test_get_replicas_info_via_overrides_with_defaults_present(mocker):
                 "defaults": "defaults-ref",
                 "overrides": '{"replicate_source_db": "replica-source-id-from-override"}',
             },
-            namespace={}
+            namespace={},
         )
     ]
     result = tfclient.TerraformClient.get_replicas_info(resource_specs)

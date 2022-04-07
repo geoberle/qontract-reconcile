@@ -465,7 +465,7 @@ def setup(dry_run, print_to_file, thread_pool_size, internal,
                                          settings=settings)
 
     # initialize terraform client
-    # used to plan and apply according to the output of terrascript
+    # it used to plan and apply according to the output of terrascript
     aws_api = AWSApi(1, accounts, settings=settings, init_users=False)
     tf = Terraform(QONTRACT_INTEGRATION,
                    QONTRACT_INTEGRATION_VERSION,
@@ -524,15 +524,21 @@ def cleanup_and_exit(tf=None, status=False, working_dirs=None):
     sys.exit(status)
 
 
-def write_outputs_to_vault(vault_path, ri):
+def write_outputs_to_vault(dry_run: bool, vault_path: str, resoure_specs: TerraformResourceSpecDict) -> None:
     integration_name = QONTRACT_INTEGRATION.replace('_', '-')
     vault_client = VaultClient()
-    for cluster, namespace, _, data in ri:
-        for name, d_item in data['desired'].items():
-            secret_path = \
-                f"{vault_path}/{integration_name}/{cluster}/{namespace}/{name}"
-            secret = {'path': secret_path, 'data': d_item.body['data']}
-            vault_client.write(secret)
+    for spec in resoure_specs.values():
+        secret_path = f"{vault_path}/{integration_name}/{spec.cluster_name}/{spec.namespace_name}/{spec.output_resource_name}"
+        # vault only stores strings as values - by converting to str upfront, we can compare current to desired
+        stringified_secret = {k: str(v) for k, v in spec.secret.items()}
+        desired_secret = {'path': secret_path, 'data': stringified_secret}
+
+        # compare secret
+        current_secret = vault_client.read_all({'path': secret_path})
+        if current_secret != stringified_secret:
+            logging.info(f"updating vault secret for {spec.output_prefix}: {current_secret} -> {desired_secret}")
+            if not dry_run:
+                vault_client.write(desired_secret)
 
 
 @defer
@@ -571,7 +577,7 @@ def run(dry_run, print_to_file=None,
         if err:
             cleanup_and_exit(tf, err)
 
-    tf.populate_desired_state(ri, oc_map, account_name, resource_specs)
+    tf.populate_desired_state(ri, resource_specs)
 
     actions = ob.realize_data(dry_run, oc_map, ri, thread_pool_size,
                               caller=account_name)
@@ -581,9 +587,7 @@ def run(dry_run, print_to_file=None,
                  account_name=account_name)
 
     if actions and vault_output_path:
-        # ri can not be used because the content is formatted
-        # by the formatter
-        write_outputs_to_vault(vault_output_path, ri)
+        write_outputs_to_vault(dry_run, vault_output_path, resource_specs)
 
     if ri.has_error_registered():
         err = True

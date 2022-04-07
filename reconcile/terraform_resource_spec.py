@@ -1,7 +1,9 @@
 from abc import abstractmethod
-from pydantic.dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
 from typing import Any, Optional, cast
 import yaml
+import copy
 from reconcile import openshift_resources_base as orb
 
 
@@ -18,10 +20,12 @@ class GenericSecretOutputFormatConfig(OutputFormatProcessor):
 
     def render(self, vars: dict[str, str]) -> dict[str, str]:
         if self.data:
-            rendered_data = orb.process_jinja2_template(self.data, vars)
+            # the jinja2 rendering has the capabilitiy to change the passed
+            # vars dict - make a copy to protect against it
+            rendered_data = orb.process_jinja2_template(self.data, dict(vars))
             return yaml.safe_load(rendered_data)
         else:
-            return vars
+            return dict(vars)
 
 
 @dataclass
@@ -46,6 +50,7 @@ class TerraformResourceSpec:
 
     resource: dict[str, Any]
     namespace: dict[str, Any]
+    secret: Optional[dict[str, str]] = field(init=False)
 
     @property
     def provider(self):
@@ -76,13 +81,32 @@ class TerraformResourceSpec:
         return self.resource.get("output_resource_name") or self.output_prefix
 
     @property
-    def output_format(self) -> OutputFormat:
+    def annotations(self) -> dict[str, str]:
+        annotation_str = self.resource.get("annotations")
+        if annotation_str:
+            return json.loads(annotation_str)
+        else:
+            return {}
+
+    def get_secret_field(self, field: str) -> Any:
+        if self.secret:
+            return self.secret.get(field, None)
+        else:
+            return None
+
+    def _output_format(self) -> OutputFormat:
         if self.resource.get("output_format") is not None:
             return OutputFormat(
                 **cast(dict[str, Any], self.resource.get("output_format"))
             )
         else:
             return OutputFormat(provider="generic-secret")
+
+    def render_output_secret(self) -> dict[str, str]:
+        if self.secret:
+            return self._output_format().render(self.secret)
+        else:
+            raise ValueError(f"resourcespec {self.output_prefix} does not have output data attached to be rendered")
 
 
 @dataclass(frozen=True)
@@ -91,6 +115,10 @@ class TerraformResourceIdentifier:
     identifier: str
     provider: str
     account: str
+
+    @property
+    def output_prefix(self) -> str:
+        return f"{self.identifier}-{self.provider}"
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "TerraformResourceIdentifier":
@@ -105,7 +133,9 @@ class TerraformResourceIdentifier:
         )
 
     @staticmethod
-    def from_output_prefix(output_prefix: str, account: str) -> "TerraformResourceIdentifier":
+    def from_output_prefix(
+        output_prefix: str, account: str
+    ) -> "TerraformResourceIdentifier":
         identifier, provider = output_prefix.rsplit("-", 1)
         return TerraformResourceIdentifier(
             identifier=identifier,
