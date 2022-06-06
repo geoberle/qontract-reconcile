@@ -422,7 +422,7 @@ AWS_ACCOUNTS_QUERY = """
     }
     {% endif %}
     {% if terraform_state %}
-    terraform_state {
+    terraformState {
       provider
       bucket
       region
@@ -437,7 +437,9 @@ AWS_ACCOUNTS_QUERY = """
 """
 
 
-def get_aws_accounts(reset_passwords=False, name=None, uid=None, sharing=False, terraform_state=False):
+def get_aws_accounts(
+    reset_passwords=False, name=None, uid=None, sharing=False, terraform_state=False
+):
     """Returns all AWS accounts"""
     gqlapi = gql.get_api()
     search = name or uid
