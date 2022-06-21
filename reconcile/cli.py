@@ -75,6 +75,29 @@ def log_level(function):
     return function
 
 
+def pr_check(function):
+    help_msg = (
+        "If `true`, it will successfully exit the integration run if the desired state "
+        "of --base-bundle and --mr-bundle is different."
+    )
+    function = click.option(
+        "--pr-check/--no-pr-check",
+        default=lambda: os.environ.get("PR_CHECK", "false") == "true",
+        help=help_msg,
+    )(function)
+    function = click.option(
+        "--base-bundle-sha",
+        default=lambda: os.environ.get("BASE_BUNDLE_SHA", None),
+        help="the bundle sha of the base commit during PR checks",
+    )(function)
+    function = click.option(
+        "--bundle-sha",
+        default=lambda: os.environ.get("BUNDLE_SHA", None),
+        help="the bundle sha of the head of an MR during PR checks",
+    )(function)
+    return function
+
+
 def dry_run(function):
     help_msg = (
         "If `true`, it will only print the planned actions "
@@ -371,7 +394,7 @@ def run_integration(func_container, ctx, *args, **kwargs):
 
     try:
         gql.init_from_config(
-            sha_url=ctx["gql_sha_url"],
+            autodetect_sha=ctx["gql_sha_url"],
             integration=int_name,
             validate_schemas=ctx["validate_schemas"],
             print_url=ctx["gql_url_print"],
@@ -388,7 +411,14 @@ def run_integration(func_container, ctx, *args, **kwargs):
     dry_run = ctx.get("dry_run", False)
 
     try:
-        func_container.run(dry_run, *args, **kwargs)
+        if ctx.get("pr_check", False):
+            base_bundle_sha = ctx["base_bundle_sha"]
+            bundle_sha = ctx["bundle_sha"]
+            run_pr_check(
+                int_name, base_bundle_sha, bundle_sha, func_container, *args, **kwargs
+            )
+        else:
+            func_container.run(dry_run, *args, **kwargs)
     except RunnerException as e:
         sys.stderr.write(str(e) + "\n")
         sys.exit(ExitCodes.ERROR)
@@ -402,6 +432,32 @@ def run_integration(func_container, ctx, *args, **kwargs):
                 f.write(json.dumps(gqlapi.get_queried_schemas()))
 
 
+def run_pr_check(
+    int_name, base_bundle_sha, bundle_sha, func_container, *args, **kwargs
+):
+    gql.init_from_config(
+        sha=base_bundle_sha,
+        integration=int_name,
+        validate_schemas=True,
+        print_url=True,
+    )
+    base_desired_state = func_container.pr_check_desired_state(*args, **kwargs)
+    gql.init_from_config(
+        sha=bundle_sha,
+        integration=int_name,
+        validate_schemas=True,
+        print_url=True,
+    )
+    head_desired_state = func_container.pr_check_desired_state(*args, **kwargs)
+    from deepdiff import DeepDiff
+
+    diff = DeepDiff(base_desired_state, head_desired_state, ignore_order=True)
+    if diff:
+        func_container.run(True, *args, **kwargs)
+    else:
+        logging.info("No changes in desired state. Exit PR check early.")
+
+
 def init_log_level(log_level):
     level = getattr(logging, log_level) if log_level else logging.INFO
     logging.basicConfig(format=LOG_FMT, datefmt=LOG_DATEFMT, level=level)
@@ -410,6 +466,7 @@ def init_log_level(log_level):
 @click.group()
 @config_file
 @dry_run
+@pr_check
 @validate_schemas
 @dump_schemas
 @gql_sha_url
@@ -420,6 +477,9 @@ def integration(
     ctx,
     configfile,
     dry_run,
+    pr_check,
+    base_bundle_sha,
+    bundle_sha,
     validate_schemas,
     dump_schemas_file,
     log_level,
@@ -431,6 +491,9 @@ def integration(
     init_log_level(log_level)
     config.init_from_toml(configfile)
     ctx.obj["dry_run"] = dry_run
+    ctx.obj["pr_check"] = pr_check
+    ctx.obj["base_bundle_sha"] = base_bundle_sha
+    ctx.obj["bundle_sha"] = bundle_sha
     ctx.obj["validate_schemas"] = validate_schemas
     ctx.obj["gql_sha_url"] = gql_sha_url
     ctx.obj["gql_url_print"] = gql_url_print

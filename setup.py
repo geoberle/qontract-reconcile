@@ -63,6 +63,7 @@ setup(
         "packaging~=21.3",
         # Needed to fix issues with router's certificates
         "cryptography==36.0.2",
+        "deepdiff",
     ],
 
     test_suite="tests",
@@ -79,6 +80,7 @@ setup(
             'e2e-tests = e2e_tests.cli:test',
             'app-interface-reporter = tools.app_interface_reporter:main',
             'qontract-cli = tools.qontract_cli:root',
+            'pr-manager = tools.app_interface_pr_check:root',
         ],
     },
 )

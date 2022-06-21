@@ -10,29 +10,25 @@ class ShardingSpec(BaseModel, extra=Extra.ignore):
     sharding_strategy: Optional[str] = Field(default=None, alias="shardingStrategy")
 
 
-@dataclass
-class ResourceRequirements:
+class ResourceRequirements(BaseModel):
 
     cpu: str
     memory: str
 
 
-@dataclass
-class Resources:
+class Resources(BaseModel):
 
     requests: Optional[ResourceRequirements]
     limits: Optional[ResourceRequirements]
 
 
-@dataclass
-class IntegrationSpec:
+class IntegrationSpec(BaseModel):
 
     name: str
     description: str
     schemas: Set[str]
 
-    @dataclass
-    class PRCheck:
+    class PRCheck(BaseModel):
 
         cmd: str
         state: Optional[bool]
@@ -42,6 +38,6 @@ class IntegrationSpec:
         no_validate_schemas: Optional[bool]
         run_for_valid_saas_file_changes: Optional[bool]
         sharding: Optional[ShardingSpec]
-        resources: Optional[ResourceRequirements]
+        resources: Optional[Resources]
 
     pr_check: Optional[PRCheck]
