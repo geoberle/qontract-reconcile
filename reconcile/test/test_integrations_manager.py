@@ -298,6 +298,17 @@ def aws_account_sharding_strategy(
 
 
 @pytest.fixture
+def integration_runtime_meta() -> dict[str, IntegrationMeta]:
+    return {
+        "integ1": IntegrationMeta(
+            name="integ1", short_help="", args=["--arg", "--account-name"]
+        ),
+        "integ2": IntegrationMeta(name="integ2", short_help="", args=["--arg"]),
+        "integ3": IntegrationMeta(name="integ3", short_help="", args=[]),
+    }
+
+
+@pytest.fixture
 def shard_manager(
     aws_account_sharding_strategy: intop.AWSAccountShardManager,
 ) -> intop.IntegrationShardManager:
@@ -305,13 +316,6 @@ def shard_manager(
         strategies={
             "static": intop.StaticShardingStrategy(),
             "per-aws-account": aws_account_sharding_strategy,
-        },
-        integration_runtime_meta={
-            "integ1": IntegrationMeta(
-                name="integ1", short_help="", args=["--arg", "--account-name"]
-            ),
-            "integ2": IntegrationMeta(name="integ2", short_help="", args=["--arg"]),
-            "integ3": IntegrationMeta(name="integ3", short_help="", args=[]),
         },
     )
 
@@ -346,13 +350,22 @@ def collected_namespaces_env_test1(
 def test_initialize_shard_specs_no_shards(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how exactly one shard is created when no sharding has been configured
     """
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     expected = [
-        {"shard_id": "0", "shards": "1", "shard_name_suffix": "", "extra_args": ""}
+        {
+            "shard_id": 0,
+            "shards": 1,
+            "shard_name_suffix": "",
+            "shard_key": None,
+            "extra_args": "",
+        }
     ]
     assert (
         expected
@@ -363,15 +376,30 @@ def test_initialize_shard_specs_no_shards(
 def test_initialize_shard_specs_two_shards(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how the default static sharding strategy creates two shards
     """
     collected_namespaces_env_test1[0]["integration_specs"][0]["shards"] = 2
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     expected = [
-        {"shard_id": "0", "shards": "2", "shard_name_suffix": "-0", "extra_args": ""},
-        {"shard_id": "1", "shards": "2", "shard_name_suffix": "-1", "extra_args": ""},
+        {
+            "shard_id": 0,
+            "shards": 2,
+            "shard_key": None,
+            "shard_name_suffix": "-0",
+            "extra_args": "",
+        },
+        {
+            "shard_id": 1,
+            "shards": 2,
+            "shard_key": None,
+            "shard_name_suffix": "-1",
+            "extra_args": "",
+        },
     ]
     assert (
         expected
@@ -382,6 +410,7 @@ def test_initialize_shard_specs_two_shards(
 def test_initialize_shard_specs_two_shards_explicit(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how the explicit static sharding strategy creates two shards
@@ -390,10 +419,24 @@ def test_initialize_shard_specs_two_shards_explicit(
         "shardingStrategy"
     ] = "static"
     collected_namespaces_env_test1[0]["integration_specs"][0]["shards"] = 2
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     expected = [
-        {"shard_id": "0", "shards": "2", "shard_name_suffix": "-0", "extra_args": ""},
-        {"shard_id": "1", "shards": "2", "shard_name_suffix": "-1", "extra_args": ""},
+        {
+            "shard_id": 0,
+            "shards": 2,
+            "shard_key": None,
+            "shard_name_suffix": "-0",
+            "extra_args": "",
+        },
+        {
+            "shard_id": 1,
+            "shards": 2,
+            "shard_key": None,
+            "shard_name_suffix": "-1",
+            "extra_args": "",
+        },
     ]
     assert (
         expected
@@ -404,6 +447,7 @@ def test_initialize_shard_specs_two_shards_explicit(
 def test_initialize_shard_specs_aws_account_shards(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how the per-aws-account strategy fills the shard_specs and ignores
@@ -412,19 +456,27 @@ def test_initialize_shard_specs_aws_account_shards(
     collected_namespaces_env_test1[0]["integration_specs"][0][
         "shardingStrategy"
     ] = "per-aws-account"
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     expected = [
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-1",
             "shard_key": "acc-1",
             "extra_args": "--account-name acc-1",
         },
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-2",
             "shard_key": "acc-2",
             "extra_args": "--account-name acc-2",
         },
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-3",
             "shard_key": "acc-3",
             "extra_args": "--account-name acc-3",
@@ -439,6 +491,7 @@ def test_initialize_shard_specs_aws_account_shards(
 def test_initialize_shard_specs_extra_arg_agregation(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how extra args are aggregated
@@ -447,19 +500,27 @@ def test_initialize_shard_specs_extra_arg_agregation(
     collected_namespaces_env_test1[0]["integration_specs"][0][
         "shardingStrategy"
     ] = "per-aws-account"
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     expected = [
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-1",
             "shard_key": "acc-1",
             "extra_args": "--arg --account-name acc-1",
         },
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-2",
             "shard_key": "acc-2",
             "extra_args": "--arg --account-name acc-2",
         },
         {
+            "shard_id": None,
+            "shards": None,
             "shard_name_suffix": "-acc-3",
             "shard_key": "acc-3",
             "extra_args": "--arg --account-name acc-3",
@@ -474,6 +535,7 @@ def test_initialize_shard_specs_extra_arg_agregation(
 def test_initialize_shard_specs_unsupported_strategy(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
     """
     this test shows how an unsupported sharding strategy fails the integration
@@ -482,15 +544,20 @@ def test_initialize_shard_specs_unsupported_strategy(
         "shardingStrategy"
     ] = "based-on-moon-cycles"
     with pytest.raises(ValueError) as e:
-        intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+        intop.initialize_shard_specs(
+            collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+        )
     assert e.value.args[0] == "unsupported sharding strategy 'based-on-moon-cycles'"
 
 
 def test_fetch_desired_state(
     collected_namespaces_env_test1: list[dict[str, Any]],
     shard_manager: intop.IntegrationShardManager,
+    integration_runtime_meta: dict[str, IntegrationMeta],
 ):
-    intop.initialize_shard_specs(collected_namespaces_env_test1, shard_manager)
+    intop.initialize_shard_specs(
+        collected_namespaces_env_test1, integration_runtime_meta, shard_manager
+    )
     ri = ResourceInventory()
     ri.initialize_resource_type("cl1", "ns1", "Deployment")
     ri.initialize_resource_type("cl1", "ns1", "Service")

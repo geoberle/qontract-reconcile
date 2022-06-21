@@ -155,7 +155,7 @@ objects:
             - name: http
               containerPort: 9090
           env:
-          {{- if $shard.shard_id }}
+          {{- if $shard.shards }}
           - name: SHARDS
             value: "{{ $shard.shards }}"
           - name: SHARD_ID

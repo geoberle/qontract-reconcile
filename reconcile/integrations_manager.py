@@ -1,5 +1,4 @@
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+import dataclasses
 import os
 import sys
 import json
@@ -13,107 +12,22 @@ import reconcile.openshift_base as ob
 from reconcile.utils import helm
 from reconcile import queries
 from reconcile.status import ExitCodes
+from reconcile.utils.integration_spec import ShardingSpec
 from reconcile.utils.oc import oc_process
 from reconcile.utils.runtime.meta import IntegrationMeta
 from reconcile.utils.semver_helper import make_semver
 from reconcile.github_org import GH_BASE_URL, get_default_config
 from reconcile.utils.openshift_resource import OpenshiftResource, ResourceInventory
 from reconcile.utils.defer import defer
+from reconcile.utils.sharding import (
+    AWSAccountShardManager,
+    IntegrationShardManager,
+    StaticShardingStrategy,
+)
 
 
 QONTRACT_INTEGRATION = "integrations-manager"
 QONTRACT_INTEGRATION_VERSION = make_semver(0, 1, 0)
-
-
-class ShardingStrategy(ABC):
-    @abstractmethod
-    def build_integration_shards(
-        self, integration_meta: IntegrationMeta, spec: Mapping[str, Any]
-    ) -> list[dict[str, Any]]:
-        pass
-
-
-@dataclass
-class IntegrationShardManager:
-
-    strategies: dict[str, ShardingStrategy]
-    integration_runtime_meta: dict[str, IntegrationMeta]
-
-    def build_integration_shards(
-        self, integration: str, spec: Mapping[str, Any]
-    ) -> list[dict[str, Any]]:
-        sharding_strategy = spec.get("shardingStrategy") or "static"
-        if sharding_strategy in self.strategies:
-            integration_meta = self.integration_runtime_meta.get(integration)
-            if not integration_meta:
-                # workaround until we can get metadata for non cli.py based integrations
-                integration_meta = IntegrationMeta(
-                    name=integration, args=[], short_help=None
-                )
-            shards = self.strategies[sharding_strategy].build_integration_shards(
-                integration_meta, spec
-            )
-
-            # add the extra args of the integrations pr check spec to each shard
-            extra_args = spec["extraArgs"]
-            if extra_args:
-                for s in shards:
-                    s["extra_args"] = f"{extra_args} {s['extra_args']}".strip()
-            return shards
-        else:
-            raise ValueError(f"unsupported sharding strategy '{sharding_strategy}'")
-
-
-class StaticShardingStrategy(ShardingStrategy):
-    def build_integration_shards(
-        self, _: IntegrationMeta, spec: Mapping[str, Any]
-    ) -> list[dict[str, Any]]:
-        shards = spec.get("shards") or 1
-        return [
-            {
-                "shard_id": str(s),
-                "shards": str(shards),
-                "shard_name_suffix": f"-{s}" if shards > 1 else "",
-                "extra_args": "",
-            }
-            for s in range(0, shards)
-        ]
-
-
-class AWSAccountShardManager(ShardingStrategy):
-    def __init__(self, aws_accounts: list[dict[str, Any]]):
-        self.aws_accounts = aws_accounts
-
-    def build_integration_shards(
-        self, integration_meta: IntegrationMeta, _: Mapping[str, Any]
-    ) -> list[dict[str, Any]]:
-        if "--account-name" in integration_meta.args:
-            filtered_accounts = self._aws_accounts_for_integration(
-                integration_meta.name
-            )
-            return [
-                {
-                    "shard_key": account["name"],
-                    "shard_name_suffix": f"-{account['name']}"
-                    if len(filtered_accounts) > 1
-                    else "",
-                    "extra_args": f"--account-name {account['name']}",
-                }
-                for account in filtered_accounts
-            ]
-        else:
-            raise ValueError(
-                f"integration {integration_meta.name} does not support arg --account-name required by the per-aws-account sharding strategy"
-            )
-
-    def _aws_accounts_for_integration(self, integration: str) -> list[dict[str, Any]]:
-        return [
-            a
-            for a in self.aws_accounts
-            if a["disable"] is None
-            or "integrations" not in a["disable"]
-            or integration not in (a["disable"]["integrations"] or [])
-        ]
 
 
 def construct_values_file(
@@ -184,13 +98,32 @@ def construct_oc_resources(
 
 
 def initialize_shard_specs(
-    namespaces: Iterable[Mapping[str, Any]], shard_manager: IntegrationShardManager
+    namespaces: Iterable[Mapping[str, Any]],
+    integration_runtime_meta: dict[str, IntegrationMeta],
+    shard_manager: IntegrationShardManager,
 ) -> None:
     for namespace_info in namespaces:
-        for spec in namespace_info["integration_specs"]:
-            spec["shard_specs"] = shard_manager.build_integration_shards(
-                spec["name"], spec
+        for integration_spec in namespace_info["integration_specs"]:
+            integration_name = integration_spec["name"]
+            integration_meta = integration_runtime_meta.get(integration_name)
+            if not integration_meta:
+                # workaround until we can get metadata for non cli.py based integrations
+                integration_meta = IntegrationMeta(
+                    name=integration_name, args=[], short_help=None
+                )
+
+            # add the extra args of the integrations pr check spec to each shard
+            sharding_spec = ShardingSpec(**integration_spec)
+            shards = shard_manager.build_integration_shards(
+                integration_meta, sharding_spec
             )
+            integration_spec["shard_specs"] = [dataclasses.asdict(s) for s in shards]
+            integration_extra_args = integration_spec["extraArgs"]
+            for s in integration_spec["shard_specs"]:
+                s[
+                    "extra_args"
+                ] = f"{integration_extra_args or ''} {s['sharding_args'] or ''}".strip()
+                del s["sharding_args"]
 
 
 def fetch_desired_state(
@@ -257,10 +190,9 @@ def run(
         strategies={
             "static": StaticShardingStrategy(),
             "per-aws-account": AWSAccountShardManager(queries.get_aws_accounts()),
-        },
-        integration_runtime_meta=integration_runtime_meta,
+        }
     )
-    initialize_shard_specs(namespaces, shard_manager)
+    initialize_shard_specs(namespaces, integration_runtime_meta, shard_manager)
     fetch_desired_state(namespaces, ri, image_tag_from_ref)
     ob.realize_data(dry_run, oc_map, ri, thread_pool_size)
 
