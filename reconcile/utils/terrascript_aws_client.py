@@ -9,8 +9,6 @@ import re
 import string
 import tempfile
 
-from reconcile import queries
-
 from threading import Lock
 
 from typing import (
