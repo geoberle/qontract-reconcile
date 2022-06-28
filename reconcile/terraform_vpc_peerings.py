@@ -1,7 +1,7 @@
 import logging
 import sys
 import json
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from reconcile import queries
 from reconcile.utils import aws_api
@@ -14,6 +14,7 @@ import reconcile.utils.terrascript_aws_client as terrascript
 from reconcile.utils.defer import defer
 from reconcile.utils.semver_helper import make_semver
 
+from sretoolbox.utils import threaded
 
 QONTRACT_INTEGRATION = "terraform_vpc_peerings"
 QONTRACT_INTEGRATION_VERSION = make_semver(0, 1, 0)
@@ -132,10 +133,16 @@ def aws_assume_roles_for_cluster_vpc_peering(
     return req_aws, acc_aws
 
 
-def build_desired_state_single_cluster(
-    cluster_info, ocm: OCM, awsapi: AWSApi, account_filter: Optional[str]
-):
+def build_desired_state_for_cluster(
+    cluster_info,
+    ocm_map: Optional[OCMMap],
+    awsapi: AWSApi,
+    account_filter: Optional[str],
+) -> list[dict[str, Any]]:
+    if not ocm_map:
+        raise ValueError("ocm_map execpted for vpc mesh desired state calculation")
     cluster_name = cluster_info["name"]
+    ocm = ocm_map.get(cluster_name)
 
     peerings = []
 
@@ -216,36 +223,17 @@ def build_desired_state_single_cluster(
     return peerings
 
 
-def build_desired_state_all_clusters(
-    clusters, ocm_map: OCMMap, awsapi: AWSApi, account_filter: Optional[str]
-):
-    """
-    Fetch state for VPC peerings between two OCM clusters
-    """
+def build_desired_state_vpc_mesh_for_cluster(
+    cluster_info,
+    ocm_map: Optional[OCMMap],
+    awsapi: AWSApi,
+    account_filter: Optional[str],
+) -> list[dict[str, Any]]:
+    if not ocm_map:
+        raise ValueError("ocm_map execpted for vpc mesh desired state calculation")
     desired_state = []
-    error = False
-
-    for cluster_info in clusters:
-        try:
-            cluster = cluster_info["name"]
-            ocm = ocm_map.get(cluster)
-            items = build_desired_state_single_cluster(
-                cluster_info, ocm, awsapi, account_filter
-            )
-            desired_state.extend(items)
-        except (KeyError, BadTerraformPeeringState, aws_api.MissingARNError):
-            logging.exception(f"Failed to get desired state for {cluster}")
-            error = True
-
-    return desired_state, error
-
-
-def build_desired_state_vpc_mesh_single_cluster(
-    cluster_info, ocm: OCM, awsapi: AWSApi, account_filter: Optional[str]
-):
-    desired_state = []
-
     cluster = cluster_info["name"]
+    ocm = ocm_map.get(cluster)
     peering_info = cluster_info["peering"]
     peer_connections = peering_info["connections"]
     for peer_connection in peer_connections:
@@ -316,38 +304,18 @@ def build_desired_state_vpc_mesh_single_cluster(
     return desired_state
 
 
-def build_desired_state_vpc_mesh(
-    clusters, ocm_map: OCMMap, awsapi: AWSApi, account_filter: Optional[str]
-):
-    """
-    Fetch state for VPC peerings between a cluster and all VPCs in an account
-    """
-    desired_state = []
-    error = False
-
-    for cluster_info in clusters:
-        try:
-            cluster = cluster_info["name"]
-            ocm = ocm_map.get(cluster)
-            items = build_desired_state_vpc_mesh_single_cluster(
-                cluster_info, ocm, awsapi, account_filter
-            )
-            desired_state.extend(items)
-        except (KeyError, BadTerraformPeeringState, aws_api.MissingARNError):
-            logging.exception(f"Unable to create VPC mesh for cluster {cluster}")
-            error = True
-
-    return desired_state, error
-
-
-def build_desired_state_vpc_single_cluster(
-    cluster_info, ocm: Optional[OCM], awsapi: AWSApi, account_filter: Optional[str]
-):
+def build_desired_state_vpc_for_cluster(
+    cluster_info,
+    ocm_map: Optional[OCMMap],
+    awsapi: AWSApi,
+    account_filter: Optional[str],
+) -> list[dict[str, Any]]:
     desired_state = []
 
     peering_info = cluster_info["peering"]
     peer_connections = peering_info["connections"]
     cluster = cluster_info["name"]
+    ocm = None if ocm_map is None else ocm_map.get(cluster)
 
     for peer_connection in peer_connections:
         # We only care about account-vpc peering providers
@@ -420,28 +388,44 @@ def build_desired_state_vpc_single_cluster(
     return desired_state
 
 
-def build_desired_state_vpc(
-    clusters, ocm_map: Optional[OCMMap], awsapi: AWSApi, account_filter: Optional[str]
-):
+def collect_desired_state(
+    collector_function: Callable[
+        [Any, Optional[OCMMap], AWSApi, Optional[str]], list[dict[str, Any]]
+    ],
+    clusters,
+    ocm_map: Optional[OCMMap],
+    awsapi: AWSApi,
+    account_filter: Optional[str],
+) -> tuple[list[dict[str, Any]], bool]:
     """
-    Fetch state for VPC peerings between a cluster and a VPC (account)
+    Fetch desired state for all clusters using the collector function
     """
-    desired_state = []
+    desired_state: list[dict[str, Any]] = []
     error = False
 
-    for cluster_info in clusters:
-        try:
-            cluster = cluster_info["name"]
-            ocm = None if ocm_map is None else ocm_map.get(cluster)
-            items = build_desired_state_vpc_single_cluster(
-                cluster_info, ocm, awsapi, account_filter
-            )
-            desired_state.extend(items)
-        except (KeyError, BadTerraformPeeringState, aws_api.MissingARNError):
-            logging.exception(f"Unable to process {cluster_info['name']}")
+    desired_state_items = threaded.run(
+        collector_function,
+        clusters,
+        10,
+        True,
+        ocm_map=ocm_map,
+        awsapi=awsapi,
+        account_filter=account_filter,
+    )
+    for item in desired_state_items:
+        if _is_desired_state_exception(item):
+            logging.critical(item)
             error = True
+        elif isinstance(item, Exception):
+            raise item
+        elif isinstance(item, list):
+            desired_state.extend(item)
 
     return desired_state, error
+
+
+def _is_desired_state_exception(ex):
+    return isinstance(ex, (KeyError, BadTerraformPeeringState, aws_api.MissingARNError))
 
 
 @defer
@@ -471,17 +455,22 @@ def run(
 
     desired_state = []
     errors = []
+
     # Fetch desired state for cluster-to-vpc(account) VPCs
-    desired_state_vpc, err = build_desired_state_vpc(
-        clusters, ocm_map, awsapi, account_name
+    desired_state_vpc, err = collect_desired_state(
+        build_desired_state_vpc_for_cluster, clusters, ocm_map, awsapi, account_name
     )
     desired_state.extend(desired_state_vpc)
     errors.append(err)
 
     # Fetch desired state for cluster-to-account (vpc mesh) VPCs
     if ocm_map is not None:
-        desired_state_vpc_mesh, err = build_desired_state_vpc_mesh(
-            clusters, ocm_map, awsapi, account_name
+        desired_state_vpc_mesh, err = collect_desired_state(
+            build_desired_state_vpc_mesh_for_cluster,
+            clusters,
+            ocm_map,
+            awsapi,
+            account_name,
         )
         desired_state.extend(desired_state_vpc_mesh)
         errors.append(err)
@@ -490,8 +479,8 @@ def run(
 
     # Fetch desired state for cluster-to-cluster VPCs
     if ocm_map is not None:
-        desired_state_cluster, err = build_desired_state_all_clusters(
-            clusters, ocm_map, awsapi, account_name
+        desired_state_cluster, err = collect_desired_state(
+            build_desired_state_for_cluster, clusters, ocm_map, awsapi, account_name
         )
         desired_state.extend(desired_state_cluster)
         errors.append(err)
