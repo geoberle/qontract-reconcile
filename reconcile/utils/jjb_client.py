@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from typing import Optional
 import xml.etree.ElementTree as et
 import json
 import re
@@ -34,17 +35,14 @@ JJB_INI = "[jenkins]\nurl = https://JENKINS_URL"
 class JJB:  # pylint: disable=too-many-public-methods
     """Wrapper around Jenkins Jobs"""
 
-    def __init__(self, configs, ssl_verify=True, settings=None, print_only=False):
-        self.settings = settings
+    def __init__(self, configs, ssl_verify=True, secret_reader: Optional[SecretReader] = None, print_only=False):
         self.print_only = print_only
-        if not print_only:
-            self.secret_reader = SecretReader(settings=settings)
+        self.secret_reader = secret_reader
         self.collect_configs(configs)
         self.modify_logger()
         self.python_https_verify = str(int(ssl_verify))
 
     def collect_configs(self, configs):
-        gqlapi = gql.get_api()
         instances = {
             c["instance"]["name"]: {
                 "serverUrl": c["instance"]["serverUrl"],
@@ -83,13 +81,8 @@ class JJB:  # pylint: disable=too-many-public-methods
                     yaml.dump(yaml.load(config, Loader=yaml.FullLoader), f)
                     f.write("\n")
             else:
-                config_path = c["config_path"]
                 # get config data
-                try:
-                    config_resource = gqlapi.get_resource(config_path)
-                    config = config_resource["content"]
-                except gql.GqlGetResourceError as e:
-                    raise FetchResourceError(str(e))
+                config = c.get("config_path", {}).get("content")
                 with open(config_file_path, "a") as f:
                     f.write(config)
                     f.write("\n")

@@ -6,6 +6,7 @@ from typing import Any, Iterable, Mapping, Optional
 from botocore.errorfactory import ClientError
 
 from reconcile.utils.aws_api import AWSApi
+from reconcile.utils.secret_reader import SecretReader
 
 
 class StateInaccessibleException(Exception):
@@ -23,7 +24,7 @@ class State:
 
     :param integration: name of calling integration
     :param accounts: Graphql AWS accounts query results
-    :param settings: App Interface settings
+    :param secret_reader: SecretReader
 
     :raises StateInaccessibleException: if the bucket is missing
     or not accessible
@@ -33,14 +34,14 @@ class State:
         self,
         integration: str,
         accounts: Iterable[Mapping[str, Any]],
-        settings: Optional[Mapping[str, Any]] = None,
+        secret_reader: SecretReader,
     ) -> None:
         """Initiates S3 client from AWSApi."""
         self.state_path = f"state/{integration}" if integration else "state"
         self.bucket = os.environ["APP_INTERFACE_STATE_BUCKET"]
         account = os.environ["APP_INTERFACE_STATE_BUCKET_ACCOUNT"]
         accounts = [a for a in accounts if a["name"] == account]
-        aws_api = AWSApi(1, accounts, settings=settings, init_users=False)
+        aws_api = AWSApi(1, accounts, secret_reader=secret_reader, init_users=False)
         session = aws_api.get_session(account)
 
         self.client = session.client("s3")

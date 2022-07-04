@@ -3,7 +3,8 @@ import logging
 from reconcile import queries
 
 from reconcile.jenkins_job_builder import init_jjb
-from reconcile.utils.jenkins_api import JenkinsApi
+from reconcile.utils.jenkins_api import JenkinsApi, init_jenkins_from_secret
+from reconcile.utils.secret_reader import SecretReader
 
 QONTRACT_INTEGRATION = "jenkins-job-cleaner"
 
@@ -18,8 +19,8 @@ def get_managed_job_names(job_names, managed_projects):
     return list(managed_jobs)
 
 
-def get_desired_job_names(instance_name):
-    jjb = init_jjb()
+def get_desired_job_names(instance_name: str, secret_reader: SecretReader):
+    jjb = init_jjb(secret_reader)
     desired_jobs = jjb.get_all_jobs(instance_name=instance_name, include_test=True)[
         instance_name
     ]
@@ -29,6 +30,7 @@ def get_desired_job_names(instance_name):
 def run(dry_run):
     jenkins_instances = queries.get_jenkins_instances()
     settings = queries.get_app_interface_settings()
+    secret_reader = SecretReader(settings)
 
     for instance in jenkins_instances:
         if instance.get("deleteMethod") != "manual":
@@ -38,11 +40,10 @@ def run(dry_run):
             continue
 
         instance_name = instance["name"]
-        token = instance["token"]
-        jenkins = JenkinsApi(token, ssl_verify=False, settings=settings)
+        jenkins = init_jenkins_from_secret(secret_reader, instance["token"], ssl_verify=False)
         all_job_names = jenkins.get_job_names()
         managed_job_names = get_managed_job_names(all_job_names, managed_projects)
-        desired_job_names = get_desired_job_names(instance_name)
+        desired_job_names = get_desired_job_names(instance_name, secret_reader)
         delete_job_names = [j for j in managed_job_names if j not in desired_job_names]
 
         for job_name in delete_job_names:

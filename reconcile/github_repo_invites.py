@@ -7,7 +7,6 @@ from typing import Any, Iterable, Mapping, Optional
 from reconcile.utils import gql
 from reconcile.utils import raw_github_api
 from reconcile.utils.secret_reader import SecretReader
-from reconcile import queries
 
 
 REPOS_QUERY = """
@@ -76,13 +75,36 @@ def _accept_invitations(
     return accepted_invitations
 
 
+SETTINGS_QUERY = """
+{
+  settings: app_interface_settings_v1 {
+    vault
+    githubRepoInvites {
+      credentials {
+        path
+        field
+        version
+        format
+      }
+    }
+  }
+}
+"""
+
+def get_settings() -> Mapping[str, Any]:
+    gqlapi = gql.get_api()
+    settings = gqlapi.query(SETTINGS_QUERY)["settings"]
+    if settings:
+        # assuming a single settings file for now
+        return settings[0]
+    return None
+
 def run(dry_run):
     gqlapi = gql.get_api()
+    settings = get_settings()
     result = gqlapi.query(REPOS_QUERY)
-    settings = queries.get_app_interface_settings()
-    secret_reader = SecretReader(settings=settings)
-    secret = settings["githubRepoInvites"]["credentials"]
-    token = secret_reader.read(secret)
+    secret_reader = SecretReader(settings)
+    token = secret_reader.read(settings["githubRepoInvites"]["credentials"])
     g = raw_github_api.RawGithubApi(token)
 
     code_components = _parse_code_components(result["apps_v1"])
