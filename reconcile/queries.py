@@ -11,6 +11,7 @@ from jinja2 import Template
 
 from reconcile.utils import gql
 
+
 SECRET_READER_SETTINGS = """
 {
   settings: app_interface_settings_v1 {
@@ -27,6 +28,7 @@ def get_secret_reader_settings() -> Mapping[str, Any]:
         # assuming a single settings file for now
         return settings[0]
     return None
+
 
 APP_INTERFACE_SETTINGS_QUERY = """
 {
