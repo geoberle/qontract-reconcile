@@ -29,8 +29,7 @@ def get_desired_job_names(instance_name: str, secret_reader: SecretReader):
 
 def run(dry_run):
     jenkins_instances = queries.get_jenkins_instances()
-    settings = queries.get_app_interface_settings()
-    secret_reader = SecretReader(settings)
+    secret_reader = SecretReader(queries.get_secret_reader_settings())
 
     for instance in jenkins_instances:
         if instance.get("deleteMethod") != "manual":
