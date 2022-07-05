@@ -4,6 +4,8 @@ import json
 from typing import Any, Iterable, Mapping, Optional
 
 from botocore.errorfactory import ClientError
+from jinja2 import Template
+from reconcile.utils import gql
 
 from reconcile.utils.aws_api import AWSApi
 from reconcile.utils.secret_reader import SecretReader
@@ -11,6 +13,34 @@ from reconcile.utils.secret_reader import SecretReader
 
 class StateInaccessibleException(Exception):
     pass
+
+STATE_ACCOUNT_QUERY = """
+{
+  accounts: awsaccounts_v1 (name: "{{ name }}")
+  {
+    name
+    resourcesDefaultRegion
+    automationToken {
+      path
+      field
+      version
+      format
+    }
+  }
+}
+"""
+
+def init_state(integration: str, secret_reader: SecretReader):
+    state_bucket_account_name = os.environ["APP_INTERFACE_STATE_BUCKET_ACCOUNT"]
+    query = Template(STATE_ACCOUNT_QUERY).render(
+        name=state_bucket_account_name
+    )
+    accounts = gql.get_api().query(query)["accounts"]
+    return State(
+        integration=integration,
+        accounts=accounts,
+        secret_reader=secret_reader
+    )
 
 
 class State:

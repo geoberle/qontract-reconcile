@@ -8,7 +8,7 @@ from reconcile import queries
 from reconcile.utils.defer import defer
 from reconcile.utils.jjb_client import JJB
 from reconcile.utils.secret_reader import SecretReader
-from reconcile.utils.state import State
+from reconcile.utils.state import State, init_state
 
 
 QUERY = """
@@ -74,8 +74,9 @@ def init_jjb(
     return JJB(configs, ssl_verify=False, secret_reader=secret_reader, print_only=print_only)
 
 
-def validate_repos_and_admins(jjb):
+def validate_repos_and_admins(jjb: JJB):
     jjb_repos = jjb.get_repos()
+
     app_int_repos = queries.get_repos()
     missing_repos = [r for r in jjb_repos if r not in app_int_repos]
     for r in missing_repos:
@@ -118,10 +119,7 @@ def run(
             jjb.generate(io_dir, "printout")
         sys.exit(0)
 
-    accounts = queries.get_state_aws_accounts()
-    state = State(
-        integration=QONTRACT_INTEGRATION, accounts=accounts, secret_reader=secret_reader
-    )
+    state = init_state(QONTRACT_INTEGRATION, secret_reader)
 
     if dry_run:
         validate_repos_and_admins(jjb)
