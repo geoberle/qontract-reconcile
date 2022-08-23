@@ -434,6 +434,9 @@ def run_integration(func_container, ctx, *args, **kwargs):
 def early_exit_integration(
     int_name: str, compare_sha: str, func_container, *args, **kwargs
 ) -> bool:
+    import time
+
+    now = time.time()
     early_exit_desired_state_function = "early_exit_desired_state"
     # does the integration support early exit?
     if "early_exit_desired_state" not in dir(func_container):
@@ -448,7 +451,7 @@ def early_exit_integration(
         gql.init_from_config(
             sha=compare_sha,
             integration=int_name,
-            validate_schemas=True,
+            validate_schemas=False,
             print_url=True,
         )
         previous_desired_state = func_container.early_exit_desired_state(
@@ -465,7 +468,7 @@ def early_exit_integration(
         gql.init_from_config(
             autodetect_sha=True,
             integration=int_name,
-            validate_schemas=True,
+            validate_schemas=False,
             print_url=True,
         )
         current_desired_state = func_container.early_exit_desired_state(*args, **kwargs)
@@ -476,7 +479,11 @@ def early_exit_integration(
     # compare
     from deepdiff import DeepDiff
 
+    a = time.time()
     diff = DeepDiff(previous_desired_state, current_desired_state)
+
+    print(f"diff {time.time()-a}")
+    print(f"early exit {time.time()-now}")
     return not diff
 
 
