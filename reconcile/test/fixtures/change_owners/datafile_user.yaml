@@ -1,0 +1,14 @@
+datafilepath: "/team/user.yml"
+datafileschema: "/access/user-1.yml"
+content:
+  $schema: /access/user-1.yml
+
+  labels: {}
+
+  name: user
+  org_username: user
+  github_username: user
+  quay_username: user
+
+  roles:
+  - $ref: /roles/a-role.yaml

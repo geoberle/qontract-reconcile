@@ -272,3 +272,17 @@ def get_api():
         raise GqlApiError("gql module has not been initialized.")
 
     return _gqlapi
+
+
+@retry(exceptions=requests.exceptions.HTTPError, max_attempts=5)
+def get_diff(old_sha: str, new_sha: str):
+    config = get_config()
+
+    server_url = urlparse(config["graphql"]["server"])
+    token = config["graphql"].get("token")
+    current_sha = get_sha(server_url, token)
+    diff_endpoint = server_url._replace(path=f"/diff/{old_sha}/{current_sha}")
+    headers = {"Authorization": token} if token else None
+    response = requests.get(diff_endpoint.geturl(), headers=headers, timeout=30)
+    response.raise_for_status()
+    return response.json()
