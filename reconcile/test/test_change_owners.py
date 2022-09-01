@@ -3,8 +3,12 @@ from typing import Any, Optional
 from reconcile.change_owners import (
     BundleFileChange,
     BundleFileType,
+    ChangeTypeContext,
+    ChangeTypeProcessor,
     FileRef,
+    create_bundle_file_change,
     build_change_type_contexts_from_self_service_roles,
+    deep_diff_path_to_jsonpath,
     extract_datafile_context_from_bundle_change,
 )
 from reconcile.gql_definitions.change_owners.fragments.change_type import ChangeType
@@ -46,8 +50,10 @@ class TestDatafile:
             for jp, v in jsonpath_patches.items():
                 e = jsonpath_ng.parse(jp)
                 e.update(new_content, v)
-        return BundleFileChange(
-            fileref=self.file_ref(),
+        return create_bundle_file_change(
+            path=self.datafilepath,
+            schema=self.datafileschema,
+            file_type=BundleFileType.DATAFILE,
             old=self.content,
             new=new_content,
         )
@@ -155,12 +161,10 @@ def test_extract_added_selector_datafile_context_from_bundle_change(
     roles.
     """
     new_role = "/role/new.yml"
-    user_change = BundleFileChange(
-        fileref=FileRef(
-            path="/somepath.yml",
-            schema="/access/user-1.yml",
-            file_type=BundleFileType.DATAFILE,
-        ),
+    user_change = create_bundle_file_change(
+        path="/somepath.yml",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
         old={
             "roles": [{"$ref": "/role/existing.yml"}],
         },
@@ -190,12 +194,10 @@ def test_extract_removed_selector_datafile_context_from_bundle_change(
     role_member_change_type.changes[0].context.when = "removed"  # type: ignore
     existing_role = "/role/existing.yml"
     new_role = "/role/new.yml"
-    user_change = BundleFileChange(
-        fileref=FileRef(
-            path="/somepath.yml",
-            schema="/access/user-1.yml",
-            file_type=BundleFileType.DATAFILE,
-        ),
+    user_change = create_bundle_file_change(
+        path="/somepath.yml",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
         old={
             "roles": [{"$ref": existing_role}],
         },
@@ -222,12 +224,10 @@ def test_extract_selector_datafile_context_from_bundle_change_schema_mismatch(
     in this testcase, the changeSchema section of the change types changes does
     not match the bundle change.
     """
-    datafile_change = BundleFileChange(
-        fileref=FileRef(
-            path="/somepath.yml",
-            schema="/some/other/schema.yml",
-            file_type=BundleFileType.DATAFILE,
-        ),
+    datafile_change = create_bundle_file_change(
+        path="/somepath.yml",
+        schema="/some/other/schema.yml",
+        file_type=BundleFileType.DATAFILE,
         old=None,
         new=None,
     )
@@ -263,14 +263,18 @@ def test_build_change_type_contexts_from_self_service_roles(
     saas_file_change = saas_file.create_bundle_change()
     contexts = build_change_type_contexts_from_self_service_roles(
         roles=[role],
-        change_types={saas_file_changetype.name: saas_file_changetype},
+        change_types=[saas_file_changetype],
         bundle_changes=[saas_file_change],
     )
 
-    assert len(contexts) == 1
-    assert contexts[0].approvers == [UserV1(org_username=approver)]
-    assert contexts[0].bundle_change == saas_file_change
-    assert contexts[0].change_type == saas_file_changetype
+    assert saas_file_change.fileref in contexts
+    change_type_contexts = contexts[saas_file_change.fileref]
+    assert len(change_type_contexts) == 1
+    assert change_type_contexts[0].approvers == [UserV1(org_username=approver)]
+    assert (
+        change_type_contexts[0].change_type_processor.change_type
+        == saas_file_changetype
+    )
 
 
 def test_build_change_type_contexts_from_self_service_roles_not_owned(
@@ -291,7 +295,7 @@ def test_build_change_type_contexts_from_self_service_roles_not_owned(
     saas_file_change = saas_file.create_bundle_change()
     contexts = build_change_type_contexts_from_self_service_roles(
         roles=[role],
-        change_types={saas_file_changetype.name: saas_file_changetype},
+        change_types=[saas_file_changetype],
         bundle_changes=[saas_file_change],
     )
 
@@ -302,12 +306,10 @@ def test_build_change_type_contexts_from_self_service_roles_context_selector(
     role_member_change_type: ChangeType,
 ):
     new_role = "/role/new.yml"
-    user_change = BundleFileChange(
-        fileref=FileRef(
-            path="/somepath.yml",
-            schema="/access/user-1.yml",
-            file_type=BundleFileType.DATAFILE,
-        ),
+    user_change = create_bundle_file_change(
+        path="/somepath.yml",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
         old={
             "roles": [{"$ref": "/role/existing.yml"}],
         },
@@ -325,26 +327,28 @@ def test_build_change_type_contexts_from_self_service_roles_context_selector(
     )
     contexts = build_change_type_contexts_from_self_service_roles(
         roles=[role],
-        change_types={role_member_change_type.name: role_member_change_type},
+        change_types=[role_member_change_type],
         bundle_changes=[user_change],
     )
 
-    assert len(contexts) == 1
-    assert contexts[0].approvers == [UserV1(org_username=approver)]
-    assert contexts[0].bundle_change == user_change
-    assert contexts[0].change_type == role_member_change_type
+    assert user_change.fileref in contexts
+    change_type_contexts = contexts[user_change.fileref]
+    assert len(change_type_contexts) == 1
+    assert change_type_contexts[0].approvers == [UserV1(org_username=approver)]
+    assert (
+        change_type_contexts[0].change_type_processor.change_type
+        == role_member_change_type
+    )
 
 
 def test_build_change_type_contexts_from_self_service_roles_context_selector_not_owned(
     role_member_change_type: ChangeType,
 ):
     new_role = "/role/new.yml"
-    user_change = BundleFileChange(
-        fileref=FileRef(
-            path="/somepath.yml",
-            schema="/access/user-1.yml",
-            file_type=BundleFileType.DATAFILE,
-        ),
+    user_change = create_bundle_file_change(
+        path="/somepath.yml",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
         old={
             "roles": [{"$ref": "/role/existing.yml"}],
         },
@@ -366,7 +370,7 @@ def test_build_change_type_contexts_from_self_service_roles_context_selector_not
     )
     contexts = build_change_type_contexts_from_self_service_roles(
         roles=[role],
-        change_types={role_member_change_type.name: role_member_change_type},
+        change_types=[role_member_change_type],
         bundle_changes=[user_change],
     )
 
@@ -374,5 +378,75 @@ def test_build_change_type_contexts_from_self_service_roles_context_selector_not
 
 
 #
+# deep diff path translation
 #
+
+
+@pytest.mark.parametrize(
+    "deep_diff_path,expected_json_path",
+    [
+        ("root['one']['two']['three']", "one.two.three"),
+        (
+            "root['resourceTemplates'][0]['targets'][0]['ref']",
+            "resourceTemplates.[0].targets.[0].ref",
+        ),
+    ],
+)
+def test_deep_diff_path_to_jsonpath(deep_diff_path, expected_json_path):
+    assert str(deep_diff_path_to_jsonpath(deep_diff_path)) == expected_json_path
+
+
 #
+# processing change coverage on a change type context
+#
+
+
+def test_cover_changes_one_file(
+    saas_file_changetype: ChangeType, saas_file: TestDatafile
+):
+    saas_file_change = saas_file.create_bundle_change(
+        {"resourceTemplates[0].targets[0].ref": "new-ref"}
+    )
+    ctx = ChangeTypeContext(
+        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        approvers=[UserV1(org_username="user")],
+    )
+    ctx.cover_changes(saas_file_change)
+
+    for diff in saas_file_change.diffs:
+        assert diff.covered_by == [ctx]
+
+
+def test_uncover_change_one_file(
+    saas_file_changetype: ChangeType, saas_file: TestDatafile
+):
+    saas_file_change = saas_file.create_bundle_change({"name": "new-name"})
+    ctx = ChangeTypeContext(
+        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        approvers=[UserV1(org_username="user")],
+    )
+    ctx.cover_changes(saas_file_change)
+
+    for diff in saas_file_change.diffs:
+        assert diff.covered_by == []
+
+
+def test_partially_covered_change_one_file(
+    saas_file_changetype: ChangeType, saas_file: TestDatafile
+):
+    saas_file_change = saas_file.create_bundle_change(
+        {"resourceTemplates[0].targets[0].ref": "new-ref", "name": "new-name"}
+    )
+    ctx = ChangeTypeContext(
+        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        approvers=[UserV1(org_username="user")],
+    )
+    ctx.cover_changes(saas_file_change)
+
+    for diff in saas_file_change.diffs:
+        if str(diff.path) == "name":
+            assert diff.covered_by == []
+        elif str(diff.path) == "resourceTemplates.[0].targets.[0].ref":
+            assert diff.covered_by == [ctx]
+        else:
+            pytest.fail(f"unexpected change path {str(diff.path)}")

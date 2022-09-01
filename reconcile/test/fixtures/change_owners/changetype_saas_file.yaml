@@ -8,11 +8,11 @@ changes:
   jsonPathSelectors:
   - deployResources
   - parameters
-  - resourceTemplates.parameters
-  - resourceTemplates.targets.ref
-  - resourceTemplates.targets.parameters
-  - resourceTemplates.targets.secretParameters.version
-  - resourceTemplates.targets.upstream
-  - resourceTemplates.targets.disable
+  - resourceTemplates[*].parameters
+  - resourceTemplates[*].targets[*].ref
+  - resourceTemplates[*].targets[*].parameters
+  - resourceTemplates[*].targets[*].secretParameters[*].version
+  - resourceTemplates[*].targets[*].upstream
+  - resourceTemplates[*].targets[*].disable
   changeSchema: null
   context: null
