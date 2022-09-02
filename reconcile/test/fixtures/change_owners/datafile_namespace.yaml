@@ -1,0 +1,10 @@
+datafilepath: "/test-namespace.yaml"
+datafileschema: "/openshift/namespace-1.yml"
+content:
+  name: test-namespace
+  openshiftResources:
+  - provider: resource-template
+    path: /some/path.yml
+  - provider: vault-secret
+    path: engine/secret
+    version: 1

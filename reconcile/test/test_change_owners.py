@@ -25,6 +25,7 @@ from .fixtures import Fixtures
 import pytest
 import copy
 import jsonpath_ng
+import jsonpath_ng.ext
 
 fxt = Fixtures("change_owners")
 
@@ -48,7 +49,7 @@ class TestDatafile:
         new_content = copy.deepcopy(self.content)
         if jsonpath_patches:
             for jp, v in jsonpath_patches.items():
-                e = jsonpath_ng.parse(jp)
+                e = jsonpath_ng.ext.parse(jp)
                 e.update(new_content, v)
         return create_bundle_file_change(
             path=self.datafilepath,
@@ -102,6 +103,11 @@ def role_member_change_type() -> ChangeType:
 
 
 @pytest.fixture
+def secret_promoter_change_type() -> ChangeType:
+    return load_change_type("changetype_secret_promoter.yaml")
+
+
+@pytest.fixture
 def change_types() -> list[ChangeType]:
     return [saas_file_changetype(), role_member_change_type()]
 
@@ -114,6 +120,11 @@ def saas_file() -> TestDatafile:
 @pytest.fixture
 def user_file() -> TestDatafile:
     return TestDatafile(**fxt.get_anymarkup("datafile_user.yaml"))
+
+
+@pytest.fixture
+def namespace_file() -> TestDatafile:
+    return TestDatafile(**fxt.get_anymarkup("datafile_namespace.yaml"))
 
 
 #
@@ -397,6 +408,64 @@ def test_deep_diff_path_to_jsonpath(deep_diff_path, expected_json_path):
 
 
 #
+# change type processor find allowed changed paths
+#
+
+
+def test_change_type_processor_allowed_paths_simple(
+    role_member_change_type: ChangeType, user_file: TestDatafile
+):
+    changed_user_file = user_file.create_bundle_change()
+    processor = ChangeTypeProcessor(change_type=role_member_change_type)
+    paths = processor.allowed_changed_paths(changed_user_file)
+
+    assert paths == ["roles"]
+
+
+def test_change_type_processor_allowed_paths_conditions(
+    secret_promoter_change_type: ChangeType, namespace_file: TestDatafile
+):
+    changed_namespace_file = namespace_file.create_bundle_change()
+    processor = ChangeTypeProcessor(change_type=secret_promoter_change_type)
+    paths = processor.allowed_changed_paths(changed_namespace_file)
+
+    assert paths == ["openshiftResources.[1].version"]
+
+
+#
+# bundle changes diff detection
+#
+
+
+def test_bundle_change_diff_value_changed():
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="schema",
+        file_type=BundleFileType.DATAFILE,
+        old={
+            "field": "old_value"
+        },
+        new={
+            "field": "new_value"
+        }
+    )
+
+    assert len(bundle_change.diffs) == 1
+    assert str(bundle_change.diffs[0].path) == "field"
+    assert bundle_change.diffs[0].diff_type == "changed"
+    assert bundle_change.diffs[0].old == "old_value"
+    assert bundle_change.diffs[0].new == "new_value"
+
+
+def test_bundle_change_diff_item_added():
+    pass
+
+
+def test_bundle_change_diff_item_removed():
+    pass
+
+
+#
 # processing change coverage on a change type context
 #
 
@@ -450,3 +519,77 @@ def test_partially_covered_change_one_file(
             assert diff.covered_by == [ctx]
         else:
             pytest.fail(f"unexpected change path {str(diff.path)}")
+
+
+#
+# e2e change coverage
+#
+
+
+def test_change_coverage(
+    secret_promoter_change_type: ChangeType,
+    namespace_file: TestDatafile,
+    role_member_change_type: ChangeType,
+    user_file: TestDatafile,
+):
+    role_approver_user = "the-one-that-approves-roles"
+    team_role_path = "/team-role.yml"
+    role_approval_role = build_role(
+        name="team-role",
+        change_type_name=role_member_change_type.name,
+        datafiles=[
+            DatafileObjectV1(
+                datafileSchema="/access/role-1.yml", path=team_role_path
+            )
+        ],
+        users=[role_approver_user],
+    )
+
+    secret_approver_user = "the-one-that-approves-secret-promotions"
+    secret_promoter_role = build_role(
+        name="secret-promoter-role",
+        change_type_name=secret_promoter_change_type.name,
+        datafiles=[
+            DatafileObjectV1(
+                datafileSchema=namespace_file.datafileschema, path=namespace_file.datafilepath
+            )
+        ],
+        users=[secret_approver_user],
+    )
+
+    bundle_changes = [
+        # create a datafile change by patching the role
+        user_file.create_bundle_change(
+            {
+                "roles[0]": {"$ref": team_role_path}
+            }
+        ),
+        # create a datafile change by bumping a secret version
+        namespace_file.create_bundle_change(
+            {
+                "openshiftResources[1].version": 2
+            }
+        )
+    ]
+
+    contexts = build_change_type_contexts_from_self_service_roles(
+        roles=[role_approval_role, secret_promoter_role],
+        change_types=[role_member_change_type, secret_promoter_change_type],
+        bundle_changes=bundle_changes
+    )
+
+
+    for bc in bundle_changes:
+        if bc.fileref in contexts:
+             for ctx in contexts[bc.fileref]:
+                ctx.cover_changes(bc)
+        for d in bc.diffs:
+            if str(d.path) == "roles.[0].$ref":
+                expected_approver = role_approver_user
+            elif str(d.path) == "openshiftResources.[1].version":
+                expected_approver = secret_approver_user
+            else:
+                pytest.fail(f"unexpected change path {str(d.path)}")
+            assert len(d.covered_by) == 1
+            assert len(d.covered_by[0].approvers) == 1
+            assert d.covered_by[0].approvers[0].org_username == expected_approver

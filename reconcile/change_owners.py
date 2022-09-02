@@ -18,7 +18,7 @@ from reconcile.gql_definitions.change_owners.queries import (
 
 from deepdiff import DeepDiff
 import jsonpath_ng
-from jsonpath_ng import JSONPath
+import jsonpath_ng.ext
 
 
 QONTRACT_INTEGRATION = "change-owners"
@@ -38,7 +38,7 @@ class FileRef:
 
 @dataclass
 class Diff:
-    path: JSONPath
+    path: jsonpath_ng.JSONPath
     diff_type: str  # e.g. added, changed
     old: Optional[Any]
     new: Optional[Any]
@@ -95,7 +95,7 @@ def extract_datafile_context_from_bundle_change(
     contexts: list[FileRef] = []
     for c in change_type.changes:
         if c.change_schema == bundle_change.fileref.schema and c.context:
-            context_selector = jsonpath_ng.parse(c.context.selector)
+            context_selector = jsonpath_ng.ext.parse(c.context.selector)
             old_contexts = {e.value for e in context_selector.find(bundle_change.old)}
             new_contexts = {e.value for e in context_selector.find(bundle_change.new)}
             if c.context.when == "added":
@@ -141,7 +141,7 @@ class ChangeTypeProcessor:
             change_schema = c.change_schema or self.change_type.context_schema
             for jsonpath_expression in c.json_path_selectors or []:
                 expressions_by_schema[change_schema].append(
-                    jsonpath_ng.parse(jsonpath_expression)
+                    jsonpath_ng.ext.parse(jsonpath_expression)
                 )
         self.expressions_by_schema = expressions_by_schema
 
@@ -171,7 +171,7 @@ class ChangeTypeContext:
             bundle_change
         ):
             for diff in bundle_change.diffs:
-                covered = allowed_path.startswith(str(diff.path))
+                covered = str(diff.path).startswith(allowed_path)
                 if covered:
                     diff.covered_by.append(self)
                 else:
