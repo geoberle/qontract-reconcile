@@ -5,6 +5,7 @@ from reconcile.change_owners import (
     BundleFileType,
     ChangeTypeContext,
     ChangeTypeProcessor,
+    Diff,
     FileRef,
     create_bundle_file_change,
     build_change_type_contexts_from_self_service_roles,
@@ -442,12 +443,8 @@ def test_bundle_change_diff_value_changed():
         path="path",
         schema="schema",
         file_type=BundleFileType.DATAFILE,
-        old={
-            "field": "old_value"
-        },
-        new={
-            "field": "new_value"
-        }
+        old={"field": "old_value"},
+        new={"field": "new_value"},
     )
 
     assert len(bundle_change.diffs) == 1
@@ -455,6 +452,117 @@ def test_bundle_change_diff_value_changed():
     assert bundle_change.diffs[0].diff_type == "changed"
     assert bundle_change.diffs[0].old == "old_value"
     assert bundle_change.diffs[0].new == "new_value"
+
+
+def test_bundle_change_diff_value_changed_deep():
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="schema",
+        file_type=BundleFileType.DATAFILE,
+        old={"parent": {"children": [{"age": 1}]}},
+        new={"parent": {"children": [{"age": 2}]}},
+    )
+
+    assert len(bundle_change.diffs) == 1
+    assert str(bundle_change.diffs[0].path) == "parent.children.[0].age"
+    assert bundle_change.diffs[0].diff_type == "changed"
+    assert bundle_change.diffs[0].old == 1
+    assert bundle_change.diffs[0].new == 2
+
+
+def test_bundle_change_diff_value_changed_multiple_in_iterable():
+    """
+    this testscenario searches shows how changes can be detected in a list,
+    when objects with identifiers and objects without are mixed and shuffled
+    """
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="/openshift/namespace-1.yml",
+        file_type=BundleFileType.DATAFILE,
+        old={
+            "$schema": "/openshift/namespace-1.yml",
+            "openshiftResources": [
+                {
+                    "provider": "vault-secret",
+                    "path": "path",
+                    "name": "secret-1",
+                    "version": 1,
+                    "__identifier": "secret-1",
+                },
+                {
+                    "provider": "vault-secret",
+                    "path": "path",
+                    "name": "secret-2",
+                    "version": 2,
+                    "__identifier": "secret-2",
+                },
+                {
+                    "provider": "resource-template",
+                    "path": "res-1",
+                    "variables": {"var1": "val1", "var2": "val2"},
+                },
+                {
+                    "provider": "resource-template",
+                    "path": "res-1",
+                    "variables": {"var1": "val3", "var2": "val4"},
+                },
+            ],
+        },
+        new={
+            "$schema": "/openshift/namespace-1.yml",
+            "openshiftResources": [
+                {
+                    "provider": "vault-secret",
+                    "path": "path",
+                    "name": "secret-2",
+                    "version": 1,
+                    "__identifier": "secret-2",
+                },
+                {
+                    "provider": "resource-template",
+                    "path": "res-1",
+                    "variables": {"var1": "val1", "var2": "new_val"},
+                },
+                {
+                    "provider": "vault-secret",
+                    "path": "path",
+                    "name": "secret-1",
+                    "version": 2,
+                    "__identifier": "secret-1",
+                },
+                {
+                    "provider": "resource-template",
+                    "path": "res-1",
+                    "variables": {"var1": "val3", "var2": "val4"},
+                },
+            ],
+        },
+    )
+
+    expected = [
+        Diff(
+            path=jsonpath_ng.parse("openshiftResources.[1].version"),
+            diff_type="changed",
+            old=2,
+            new=1,
+            covered_by=[],
+        ),
+        Diff(
+            path=jsonpath_ng.parse("openshiftResources.[2].variables.var2"),
+            diff_type="changed",
+            old="val2",
+            new="new_val",
+            covered_by=[],
+        ),
+        Diff(
+            path=jsonpath_ng.parse("openshiftResources.[0].version"),
+            diff_type="changed",
+            old=1,
+            new=2,
+            covered_by=[],
+        ),
+    ]
+    assert bundle_change.diffs == expected
 
 
 def test_bundle_change_diff_item_added():
@@ -538,9 +646,7 @@ def test_change_coverage(
         name="team-role",
         change_type_name=role_member_change_type.name,
         datafiles=[
-            DatafileObjectV1(
-                datafileSchema="/access/role-1.yml", path=team_role_path
-            )
+            DatafileObjectV1(datafileSchema="/access/role-1.yml", path=team_role_path)
         ],
         users=[role_approver_user],
     )
@@ -551,7 +657,8 @@ def test_change_coverage(
         change_type_name=secret_promoter_change_type.name,
         datafiles=[
             DatafileObjectV1(
-                datafileSchema=namespace_file.datafileschema, path=namespace_file.datafilepath
+                datafileSchema=namespace_file.datafileschema,
+                path=namespace_file.datafilepath,
             )
         ],
         users=[secret_approver_user],
@@ -559,29 +666,20 @@ def test_change_coverage(
 
     bundle_changes = [
         # create a datafile change by patching the role
-        user_file.create_bundle_change(
-            {
-                "roles[0]": {"$ref": team_role_path}
-            }
-        ),
+        user_file.create_bundle_change({"roles[0]": {"$ref": team_role_path}}),
         # create a datafile change by bumping a secret version
-        namespace_file.create_bundle_change(
-            {
-                "openshiftResources[1].version": 2
-            }
-        )
+        namespace_file.create_bundle_change({"openshiftResources[1].version": 2}),
     ]
 
     contexts = build_change_type_contexts_from_self_service_roles(
         roles=[role_approval_role, secret_promoter_role],
         change_types=[role_member_change_type, secret_promoter_change_type],
-        bundle_changes=bundle_changes
+        bundle_changes=bundle_changes,
     )
-
 
     for bc in bundle_changes:
         if bc.fileref in contexts:
-             for ctx in contexts[bc.fileref]:
+            for ctx in contexts[bc.fileref]:
                 ctx.cover_changes(bc)
         for d in bc.diffs:
             if str(d.path) == "roles.[0].$ref":

@@ -17,6 +17,8 @@ from reconcile.gql_definitions.change_owners.queries import (
 )
 
 from deepdiff import DeepDiff
+from deepdiff.helper import CannotCompare
+
 import jsonpath_ng
 import jsonpath_ng.ext
 
@@ -53,6 +55,18 @@ class BundleFileChange:
     diffs: list[Diff]
 
 
+def compare_ctx_identifier(x: Any, y: Any):
+    x_id = x.get("__identifier")
+    y_id = y.get("__identifier")
+    if x_id and y_id:
+        # if both have an identifier, they are the same if the identifier is the same
+        return x_id == y_id
+    if x_id or y_id:
+        # if only one of them has an identifier, they must be different objects
+        return False
+    raise CannotCompare() from None
+
+
 def create_bundle_file_change(
     path: str,
     schema: Optional[str],
@@ -63,7 +77,9 @@ def create_bundle_file_change(
     fileref = FileRef(path=path, schema=schema, file_type=file_type)
     diffs: list[Diff] = []
     if old and new:
-        deep_diff = DeepDiff(old, new, ignore_order=True)
+        deep_diff = DeepDiff(
+            old, new, ignore_order=True, iterable_compare_func=compare_ctx_identifier
+        )
         diffs.extend(
             [
                 Diff(
@@ -194,12 +210,12 @@ class ChangeTypeContext:
 # a look if this role is assigned somehow to this changetype and by which approvers
 
 
-def fetch_self_service_roles() -> list[RoleV1]:
+def fetch_self_service_roles(comparison_sha: str) -> list[RoleV1]:
     roles = self_service_roles.query(gql.get_api()).roles or []
     return [r for r in roles if r and r.self_service]
 
 
-def fetch_change_types() -> list[ChangeType]:
+def fetch_change_types(comparison_sha: str) -> list[ChangeType]:
     change_type_list = change_types.query(gql.get_api()).change_types or []
     return [ct for ct in change_type_list if ct]
 
@@ -286,8 +302,8 @@ def run(dry_run: bool, comparison_sha: str):
     changes = find_bundle_changes(comparison_sha)
     contexts = build_change_type_contexts_from_self_service_roles(
         bundle_changes=changes,
-        change_types=fetch_change_types(),
-        roles=fetch_self_service_roles(),
+        change_types=fetch_change_types(comparison_sha),
+        roles=fetch_self_service_roles(comparison_sha),
     )
     print(contexts)
 
