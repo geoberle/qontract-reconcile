@@ -656,7 +656,55 @@ def test_bundle_change_diff_item_added():
 
 
 def test_bundle_change_diff_item_removed():
-    pass
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="/openshift/namespace-1.yml",
+        file_type=BundleFileType.DATAFILE,
+        old={
+            "$schema": "/openshift/namespace-1.yml",
+            "openshiftResources": [
+                {
+                    "provider": "vault-secret",
+                    "path": "path-1",
+                    "version": 1,
+                    "__identifier": "secret-1",
+                },
+                {
+                    "provider": "vault-secret",
+                    "path": "path-2",
+                    "version": 2,
+                    "__identifier": "secret-2",
+                },
+            ],
+        },
+        new={
+            "$schema": "/openshift/namespace-1.yml",
+            "openshiftResources": [
+                {
+                    "provider": "vault-secret",
+                    "path": "path-2",
+                    "version": 2,
+                    "__identifier": "secret-2",
+                },
+            ],
+        },
+    )
+
+    expected = [
+        Diff(
+            path=jsonpath_ng.parse("openshiftResources.[0]"),
+            diff_type="removed",
+            old={
+                "provider": "vault-secret",
+                "path": "path-1",
+                "version": 1,
+                "__identifier": "secret-1",
+            },
+            new=None,
+            covered_by=[],
+        ),
+    ]
+    assert bundle_change.diffs == expected
 
 
 #

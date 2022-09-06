@@ -100,7 +100,7 @@ def create_bundle_file_change(
                     path=deep_diff_path_to_jsonpath(path),
                     diff_type="added",
                     old=None,
-                    new=None, # TODO(goberlec) get access to new
+                    new=None,  # TODO(goberlec) get access to new
                     covered_by=[],
                 )
                 for path in deep_diff.get("dictionary_item_added", [])
@@ -117,6 +117,19 @@ def create_bundle_file_change(
                     covered_by=[],
                 )
                 for path, change in deep_diff.get("iterable_item_added", {}).items()
+            ]
+        )
+        # handle removed items
+        diffs.extend(
+            [
+                Diff(
+                    path=deep_diff_path_to_jsonpath(path),
+                    diff_type="removed",
+                    old=change,
+                    new=None,
+                    covered_by=[],
+                )
+                for path, change in deep_diff.get("iterable_item_removed", {}).items()
             ]
         )
     return BundleFileChange(fileref=fileref, old=old, new=new, diffs=diffs)
@@ -370,7 +383,7 @@ def run(dry_run: bool, comparison_sha: str):
             item = {
                 "file": c.fileref.path,
                 "schema": c.fileref.schema,
-                "changed doc path": d.path,
+                "changed path": d.path,
                 "old value": d.old,
                 "new value": d.new,
             }
