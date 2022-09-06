@@ -210,18 +210,18 @@ class ChangeTypeContext:
 # a look if this role is assigned somehow to this changetype and by which approvers
 
 
-def fetch_self_service_roles(comparison_sha: str) -> list[RoleV1]:
-    roles = self_service_roles.query(gql.get_api()).roles or []
+def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
+    roles = self_service_roles.query(gql_api).roles or []
     return [r for r in roles if r and r.self_service]
 
 
-def fetch_change_types(comparison_sha: str) -> list[ChangeType]:
-    change_type_list = change_types.query(gql.get_api()).change_types or []
+def fetch_change_types(gql_api: gql.GqlApi) -> list[ChangeType]:
+    change_type_list = change_types.query(gql_api).change_types or []
     return [ct for ct in change_type_list if ct]
 
 
 def find_bundle_changes(comparison_sha: str) -> list[BundleFileChange]:
-    changes = gql.get_diff(comparison_sha, None)
+    changes = gql.get_diff(comparison_sha)
     return _parse_bundle_changes(changes)
 
 
@@ -299,11 +299,12 @@ def build_change_type_contexts_from_self_service_roles(
 
 
 def run(dry_run: bool, comparison_sha: str):
+    camparision_gql_api = gql.get_api_for_sha(comparison_sha, QONTRACT_INTEGRATION, True)
     changes = find_bundle_changes(comparison_sha)
     contexts = build_change_type_contexts_from_self_service_roles(
         bundle_changes=changes,
-        change_types=fetch_change_types(comparison_sha),
-        roles=fetch_self_service_roles(comparison_sha),
+        change_types=fetch_change_types(camparision_gql_api),
+        roles=fetch_self_service_roles(camparision_gql_api),
     )
     print(contexts)
 

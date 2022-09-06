@@ -484,15 +484,13 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
             "openshiftResources": [
                 {
                     "provider": "vault-secret",
-                    "path": "path",
-                    "name": "secret-1",
+                    "path": "path-1",
                     "version": 1,
                     "__identifier": "secret-1",
                 },
                 {
                     "provider": "vault-secret",
-                    "path": "path",
-                    "name": "secret-2",
+                    "path": "path-2",
                     "version": 2,
                     "__identifier": "secret-2",
                 },
@@ -513,8 +511,7 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
             "openshiftResources": [
                 {
                     "provider": "vault-secret",
-                    "path": "path",
-                    "name": "secret-2",
+                    "path": "path-2",
                     "version": 1,
                     "__identifier": "secret-2",
                 },
@@ -525,7 +522,6 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
                 },
                 {
                     "provider": "vault-secret",
-                    "path": "path",
                     "name": "secret-1",
                     "version": 2,
                     "__identifier": "secret-1",

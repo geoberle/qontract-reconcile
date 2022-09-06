@@ -274,8 +274,13 @@ def get_api():
     return _gqlapi
 
 
+def get_api_for_sha(sha: str, integration: Optional[str] = None, validate_schemas: bool = True) -> GqlApi:
+    server, token = _get_gql_server_and_token(autodetect_sha=False, sha=sha)
+    return GqlApi(server, token, integration, validate_schemas)
+
+
 @retry(exceptions=requests.exceptions.HTTPError, max_attempts=5)
-def get_diff(old_sha: str, new_sha: str):
+def get_diff(old_sha: str):
     config = get_config()
 
     server_url = urlparse(config["graphql"]["server"])
