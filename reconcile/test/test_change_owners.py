@@ -6,6 +6,7 @@ from reconcile.change_owners import (
     ChangeTypeContext,
     ChangeTypeProcessor,
     Diff,
+    DiffType,
     FileRef,
     create_bundle_file_change,
     build_change_type_contexts_from_self_service_roles,
@@ -449,7 +450,7 @@ def test_bundle_change_diff_value_changed():
 
     assert len(bundle_change.diffs) == 1
     assert str(bundle_change.diffs[0].path) == "field"
-    assert bundle_change.diffs[0].diff_type == "changed"
+    assert bundle_change.diffs[0].diff_type == DiffType.CHANGED
     assert bundle_change.diffs[0].old == "old_value"
     assert bundle_change.diffs[0].new == "new_value"
 
@@ -465,7 +466,7 @@ def test_bundle_change_diff_value_changed_deep():
 
     assert len(bundle_change.diffs) == 1
     assert str(bundle_change.diffs[0].path) == "parent.children.[0].age"
-    assert bundle_change.diffs[0].diff_type == "changed"
+    assert bundle_change.diffs[0].diff_type == DiffType.CHANGED
     assert bundle_change.diffs[0].old == 1
     assert bundle_change.diffs[0].new == 2
 
@@ -538,21 +539,21 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
     expected = [
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[1].version"),
-            diff_type="changed",
+            diff_type=DiffType.CHANGED,
             old=2,
             new=1,
             covered_by=[],
         ),
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[2].variables.var2"),
-            diff_type="changed",
+            diff_type=DiffType.CHANGED,
             old="val2",
             new="new_val",
             covered_by=[],
         ),
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[0].version"),
-            diff_type="changed",
+            diff_type=DiffType.CHANGED,
             old=1,
             new=2,
             covered_by=[],
@@ -594,7 +595,7 @@ def test_bundle_change_diff_property_added():
     expected = [
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[0].new_field"),
-            diff_type="added",
+            diff_type=DiffType.ADDED,
             old=None,
             new=None,
             covered_by=[],
@@ -636,7 +637,7 @@ def test_bundle_change_diff_property_removed():
     expected = [
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[0].old_field"),
-            diff_type="removed",
+            diff_type=DiffType.REMOVED,
             old=None,
             new=None,
             covered_by=[],
@@ -683,7 +684,7 @@ def test_bundle_change_diff_item_added():
     expected = [
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[0]"),
-            diff_type="added",
+            diff_type=DiffType.ADDED,
             old=None,
             new={
                 "provider": "vault-secret",
@@ -735,7 +736,7 @@ def test_bundle_change_diff_item_removed():
     expected = [
         Diff(
             path=jsonpath_ng.parse("openshiftResources.[0]"),
-            diff_type="removed",
+            diff_type=DiffType.REMOVED,
             old={
                 "provider": "vault-secret",
                 "path": "path-1",
@@ -762,6 +763,8 @@ def test_cover_changes_one_file(
     )
     ctx = ChangeTypeContext(
         change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        context_type="RoleV1",
+        context="some-role",
         approvers=[UserV1(org_username="user")],
     )
     ctx.cover_changes(saas_file_change)
@@ -776,6 +779,8 @@ def test_uncover_change_one_file(
     saas_file_change = saas_file.create_bundle_change({"name": "new-name"})
     ctx = ChangeTypeContext(
         change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        context_type="RoleV1",
+        context="some-role",
         approvers=[UserV1(org_username="user")],
     )
     ctx.cover_changes(saas_file_change)
@@ -792,6 +797,8 @@ def test_partially_covered_change_one_file(
     )
     ctx = ChangeTypeContext(
         change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        context_type="RoleV1",
+        context="some-role",
         approvers=[UserV1(org_username="user")],
     )
     ctx.cover_changes(saas_file_change)
@@ -810,7 +817,7 @@ def test_partially_covered_change_one_file(
 #
 
 
-def test_change_coverage(
+def test_e2e_change_coverage(
     secret_promoter_change_type: ChangeType,
     namespace_file: TestDatafile,
     role_member_change_type: ChangeType,

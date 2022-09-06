@@ -2,28 +2,31 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, Protocol, Tuple
-import re
 from functools import reduce
+import re
 
 from reconcile.utils import gql
-
 from reconcile.gql_definitions.change_owners.fragments.change_type import (
     ChangeType,
+    ChangeTypeChangeDetectorJsonPathProviderV1,
 )
 from reconcile.gql_definitions.change_owners.queries.self_service_roles import RoleV1
 from reconcile.gql_definitions.change_owners.queries import (
     self_service_roles,
     change_types,
 )
+from reconcile.utils.semver_helper import make_semver
 
 from deepdiff import DeepDiff
 from deepdiff.helper import CannotCompare
 
 import jsonpath_ng
 import jsonpath_ng.ext
+from tabulate import tabulate
 
 
 QONTRACT_INTEGRATION = "change-owners"
+QONTRACT_INTEGRATION_VERSION = make_semver(0, 1, 0)
 
 
 class BundleFileType(Enum):
@@ -38,10 +41,16 @@ class FileRef:
     schema: Optional[str]
 
 
+class DiffType(Enum):
+    ADDED = "added"
+    REMOVED = "removed"
+    CHANGED = "changed"
+
+
 @dataclass
 class Diff:
     path: jsonpath_ng.JSONPath
-    diff_type: str  # e.g. added, changed
+    diff_type: DiffType  # e.g. added, changed
     old: Optional[Any]
     new: Optional[Any]
     covered_by: list["ChangeTypeContext"]
@@ -85,7 +94,7 @@ def create_bundle_file_change(
             [
                 Diff(
                     path=deep_diff_path_to_jsonpath(path),
-                    diff_type="changed",
+                    diff_type=DiffType.CHANGED,
                     old=change.get("old_value"),
                     new=change.get("new_value"),
                     covered_by=[],
@@ -98,7 +107,7 @@ def create_bundle_file_change(
             [
                 Diff(
                     path=deep_diff_path_to_jsonpath(path),
-                    diff_type="added",
+                    diff_type=DiffType.ADDED,
                     old=None,
                     new=None,  # TODO(goberlec) get access to new
                     covered_by=[],
@@ -111,7 +120,7 @@ def create_bundle_file_change(
             [
                 Diff(
                     path=deep_diff_path_to_jsonpath(path),
-                    diff_type="removed",
+                    diff_type=DiffType.REMOVED,
                     old=None,  # TODO(goberlec) get access to new
                     new=None,
                     covered_by=[],
@@ -124,7 +133,7 @@ def create_bundle_file_change(
             [
                 Diff(
                     path=deep_diff_path_to_jsonpath(path),
-                    diff_type="added",
+                    diff_type=DiffType.ADDED,
                     old=None,
                     new=change,
                     covered_by=[],
@@ -137,7 +146,7 @@ def create_bundle_file_change(
             [
                 Diff(
                     path=deep_diff_path_to_jsonpath(path),
-                    diff_type="removed",
+                    diff_type=DiffType.REMOVED,
                     old=change,
                     new=None,
                     covered_by=[],
@@ -207,10 +216,16 @@ class ChangeTypeProcessor:
     def __post_init__(self):
         expressions_by_schema: dict[str, list[jsonpath_ng.JSONPath]] = defaultdict(list)
         for c in self.change_type.changes or []:
-            change_schema = c.change_schema or self.change_type.context_schema
-            for jsonpath_expression in c.json_path_selectors or []:
-                expressions_by_schema[change_schema].append(
-                    jsonpath_ng.ext.parse(jsonpath_expression)
+            if isinstance(c, ChangeTypeChangeDetectorJsonPathProviderV1):
+                change_schema = c.change_schema or self.change_type.context_schema
+                if change_schema:
+                    for jsonpath_expression in c.json_path_selectors or []:
+                        expressions_by_schema[change_schema].append(
+                            jsonpath_ng.ext.parse(jsonpath_expression)
+                        )
+            else:
+                raise ValueError(
+                    f"{c.provider} is not a supported change detection provider within ChangeTypes"
                 )
         self.expressions_by_schema = expressions_by_schema
 
@@ -245,22 +260,6 @@ class ChangeTypeContext:
                 covered = str(diff.path).startswith(allowed_path)
                 if covered:
                     diff.covered_by.append(self)
-
-
-# for the regular context it is easy - we can decide upfront when to create a context object
-# because the owned objects are listed next to the change type and we know what changed in the bundle
-
-# for the change types with a context selector, it is harder because we would need to inspect
-# changed objects upfront (e.g. a user) and extract the owning objects (e.g. the role) - and then
-# we need to keep searching if that changetype is combined with one of those owning objects. and then,
-# we can create the context object.
-#
-# is this bad? not necessarily. most of the time not many files change in an MR
-#
-# walkthrough - so we see a user file changed. we look through our change types if any has a
-# change with a changeSchema == /access/user-1.yml. if we found one we inspect the contextSelector
-# and see what it matches on, e.g. it matches on adding a role. this role is now are context. lets
-# a look if this role is assigned somehow to this changetype and by which approvers
 
 
 def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
@@ -403,7 +402,6 @@ def run(dry_run: bool, comparison_sha: str):
             if d.covered_by:
                 item.update(
                     {
-                        "covered": "yes" if d.covered_by else "no",
                         "change type": d.covered_by[
                             0
                         ].change_type_processor.change_type.name,
@@ -413,11 +411,7 @@ def run(dry_run: bool, comparison_sha: str):
                         )[:20],
                     }
                 )
-            else:
-                item["covered"] = "no"
             results.append(item)
-
-    from tools.qontract_cli import print_table
 
     print_table(
         results,
@@ -426,14 +420,34 @@ def run(dry_run: bool, comparison_sha: str):
             "changed path",
             "old value",
             "new value",
-            "covered",
             "change type",
             "context",
             "approvers",
         ],
     )
-    # process the contexts to eliminate document parts that are covered by
-    # the change type
 
-    # then do another diff on all changes, if no diffs remain, the PR can be self
-    # serviced by the approvers in the contexts
+
+def print_table(content, columns, table_format="simple"):
+    headers = [column.upper() for column in columns]
+    table_data = []
+    for item in content:
+        row_data = []
+        for column in columns:
+            cell = item
+            for token in column.split("."):
+                cell = cell.get(token) or {}
+            if cell == {}:
+                cell = ""
+            if isinstance(cell, list):
+                cell = "\n".join(cell)
+            row_data.append(cell)
+        table_data.append(row_data)
+
+    print(tabulate(table_data, headers=headers, tablefmt=table_format))
+
+
+# todo
+# write docs
+# write PR comment
+# rething changetype context structure - make move the cover function to the bundle change??
+# dedup code in create_bundle_file_change
