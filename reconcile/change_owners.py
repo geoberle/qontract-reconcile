@@ -80,6 +80,7 @@ def create_bundle_file_change(
         deep_diff = DeepDiff(
             old, new, ignore_order=True, iterable_compare_func=compare_ctx_identifier
         )
+        # handle changed values
         diffs.extend(
             [
                 Diff(
@@ -90,6 +91,32 @@ def create_bundle_file_change(
                     covered_by=[],
                 )
                 for path, change in deep_diff.get("values_changed", {}).items()
+            ]
+        )
+        # handle property added
+        diffs.extend(
+            [
+                Diff(
+                    path=deep_diff_path_to_jsonpath(path),
+                    diff_type="added",
+                    old=None,
+                    new=None, # TODO(goberlec) get access to new
+                    covered_by=[],
+                )
+                for path in deep_diff.get("dictionary_item_added", [])
+            ]
+        )
+        # handle added items
+        diffs.extend(
+            [
+                Diff(
+                    path=deep_diff_path_to_jsonpath(path),
+                    diff_type="added",
+                    old=None,
+                    new=change,
+                    covered_by=[],
+                )
+                for path, change in deep_diff.get("iterable_item_added", {}).items()
             ]
         )
     return BundleFileChange(fileref=fileref, old=old, new=new, diffs=diffs)
@@ -180,6 +207,8 @@ class ChangeTypeProcessor:
 @dataclass
 class ChangeTypeContext:
     change_type_processor: ChangeTypeProcessor
+    context_type: str
+    context: str
     approvers: list[Approver]
 
     def cover_changes(self, bundle_change: BundleFileChange):
@@ -190,8 +219,6 @@ class ChangeTypeContext:
                 covered = str(diff.path).startswith(allowed_path)
                 if covered:
                     diff.covered_by.append(self)
-                else:
-                    print("no")
 
 
 # for the regular context it is easy - we can decide upfront when to create a context object
@@ -211,12 +238,12 @@ class ChangeTypeContext:
 
 
 def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
-    roles = self_service_roles.query(gql_api).roles or []
+    roles = self_service_roles.query(gql_api.query).roles or []
     return [r for r in roles if r and r.self_service]
 
 
 def fetch_change_types(gql_api: gql.GqlApi) -> list[ChangeType]:
-    change_type_list = change_types.query(gql_api).change_types or []
+    change_type_list = change_types.query(gql_api.query).change_types or []
     return [ct for ct in change_type_list if ct]
 
 
@@ -291,6 +318,8 @@ def build_change_type_contexts_from_self_service_roles(
                     change_type_contexts[bc.fileref].append(
                         ChangeTypeContext(
                             change_type_processor=ctp,
+                            context_type="RoleV1",
+                            context=role.name,
                             approvers=[u for u in role.users or [] if u],
                         )
                     )
@@ -298,16 +327,85 @@ def build_change_type_contexts_from_self_service_roles(
     return change_type_contexts
 
 
-def run(dry_run: bool, comparison_sha: str):
-    camparision_gql_api = gql.get_api_for_sha(comparison_sha, QONTRACT_INTEGRATION, True)
-    changes = find_bundle_changes(comparison_sha)
+def build_change_type_contexts(
+    changes: list[BundleFileChange],
+    change_types: list[ChangeType],
+    comparision_gql_api: gql.GqlApi,
+):
     contexts = build_change_type_contexts_from_self_service_roles(
         bundle_changes=changes,
-        change_types=fetch_change_types(camparision_gql_api),
-        roles=fetch_self_service_roles(camparision_gql_api),
+        change_types=change_types,
+        roles=fetch_self_service_roles(comparision_gql_api),
     )
-    print(contexts)
+    # add more contexts from other places, e.g.
+    # - build_change_type_contexts_for_user_file_self_service()
+    #  ...
+    return contexts
 
+
+def cover_changes(
+    changes: list[BundleFileChange],
+    change_types: list[ChangeType],
+    comparision_gql_api: gql.GqlApi,
+):
+    contexts = build_change_type_contexts(changes, change_types, comparision_gql_api)
+    for c in changes:
+        if c.fileref in contexts:
+            for ctx in contexts[c.fileref]:
+                ctx.cover_changes(c)
+
+
+def run(dry_run: bool, comparison_sha: str):
+    comparision_gql_api = gql.get_api_for_sha(
+        comparison_sha, QONTRACT_INTEGRATION, validate_schemas=False
+    )
+
+    changes = find_bundle_changes(comparison_sha)
+    change_types = fetch_change_types(comparision_gql_api)
+    cover_changes(changes, change_types, comparision_gql_api)
+
+    results = []
+    for c in changes:
+        for d in c.diffs:
+            item = {
+                "file": c.fileref.path,
+                "schema": c.fileref.schema,
+                "changed doc path": d.path,
+                "old value": d.old,
+                "new value": d.new,
+            }
+            if d.covered_by:
+                item.update(
+                    {
+                        "covered": "yes" if d.covered_by else "no",
+                        "change type": d.covered_by[
+                            0
+                        ].change_type_processor.change_type.name,
+                        "context": f"{d.covered_by[0].context_type} - {d.covered_by[0].context}",
+                        "approvers": ", ".join(
+                            [a.org_username for a in d.covered_by[0].approvers]
+                        )[:20],
+                    }
+                )
+            else:
+                item["covered"] = "no"
+            results.append(item)
+
+    from tools.qontract_cli import print_table
+
+    print_table(
+        results,
+        [
+            "file",
+            "changed path",
+            "old value",
+            "new value",
+            "covered",
+            "change type",
+            "context",
+            "approvers",
+        ],
+    )
     # process the contexts to eliminate document parts that are covered by
     # the change type
 
