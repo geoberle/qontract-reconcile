@@ -106,6 +106,19 @@ def create_bundle_file_change(
                 for path in deep_diff.get("dictionary_item_added", [])
             ]
         )
+        # handle property removed
+        diffs.extend(
+            [
+                Diff(
+                    path=deep_diff_path_to_jsonpath(path),
+                    diff_type="removed",
+                    old=None,  # TODO(goberlec) get access to new
+                    new=None,
+                    covered_by=[],
+                )
+                for path in deep_diff.get("dictionary_item_removed", [])
+            ]
+        )
         # handle added items
         diffs.extend(
             [
