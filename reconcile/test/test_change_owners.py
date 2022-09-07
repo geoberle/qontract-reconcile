@@ -45,20 +45,22 @@ class TestDatafile:
         )
 
     def create_bundle_change(
-        self, jsonpath_patches: Optional[dict[str, Any]] = None
+        self, jsonpath_patches: dict[str, Any]
     ) -> BundleFileChange:
         new_content = copy.deepcopy(self.content)
         if jsonpath_patches:
             for jp, v in jsonpath_patches.items():
                 e = jsonpath_ng.ext.parse(jp)
                 e.update(new_content, v)
-        return create_bundle_file_change(
+        bundle_file_change = create_bundle_file_change(
             path=self.datafilepath,
             schema=self.datafileschema,
             file_type=BundleFileType.DATAFILE,
             old_file_content=self.content,
             new_file_content=new_content,
         )
+        assert bundle_file_change
+        return bundle_file_change
 
 
 def load_change_type(path: str) -> ChangeType:
@@ -142,7 +144,9 @@ def test_extract_context_file_refs_from_bundle_change(
     of the change type, so the change type is directly relevant for the changed
     datafile
     """
-    bundle_change = saas_file.create_bundle_change()
+    bundle_change = saas_file.create_bundle_change(
+        {"resourceTemplates[0].targets[0].ref": "new-ref"}
+    )
     file_refs = bundle_change.extract_context_file_refs(saas_file_changetype)
     assert file_refs == [saas_file.file_ref()]
 
@@ -155,7 +159,9 @@ def test_extract_context_file_refs_from_bundle_change_schema_mismatch(
     change types do not match and hence to context is extracted.
     """
     saas_file.datafileschema = "/some/other/schema.yml"
-    bundle_change = saas_file.create_bundle_change()
+    bundle_change = saas_file.create_bundle_change(
+        {"resourceTemplates[0].targets[0].ref": "new-ref"}
+    )
     file_refs = bundle_change.extract_context_file_refs(saas_file_changetype)
     assert not file_refs
 
@@ -183,6 +189,7 @@ def test_extract_context_file_refs_added_selector(
             "roles": [{"$ref": "/role/existing.yml"}, {"$ref": new_role}],
         },
     )
+    assert user_change
     file_refs = user_change.extract_context_file_refs(role_member_change_type)
     assert file_refs == [
         FileRef(
@@ -214,6 +221,7 @@ def test_extract_context_file_refs_removed_selector(
             "roles": [{"$ref": new_role}],
         },
     )
+    assert user_change
     file_refs = user_change.extract_context_file_refs(role_member_change_type)
     assert file_refs == [
         FileRef(
@@ -235,9 +243,10 @@ def test_extract_context_file_refs_selector_change_schema_mismatch(
         path="/somepath.yml",
         schema="/some/other/schema.yml",
         file_type=BundleFileType.DATAFILE,
-        old_file_content=None,
-        new_file_content=None,
+        old_file_content={"field": "old-value"},
+        new_file_content={"field": "new-value"},
     )
+    assert datafile_change
     file_refs = datafile_change.extract_context_file_refs(role_member_change_type)
     assert not file_refs
 
@@ -273,7 +282,9 @@ def test_deep_diff_path_to_jsonpath(deep_diff_path, expected_json_path):
 def test_change_type_processor_allowed_paths_simple(
     role_member_change_type: ChangeType, user_file: TestDatafile
 ):
-    changed_user_file = user_file.create_bundle_change()
+    changed_user_file = user_file.create_bundle_change(
+        {"roles[0]": {"$ref": "some-role"}}
+    )
     processor = build_change_type_process(role_member_change_type)
     paths = processor.allowed_changed_paths(
         changed_user_file.fileref, changed_user_file.new
@@ -285,7 +296,9 @@ def test_change_type_processor_allowed_paths_simple(
 def test_change_type_processor_allowed_paths_conditions(
     secret_promoter_change_type: ChangeType, namespace_file: TestDatafile
 ):
-    changed_namespace_file = namespace_file.create_bundle_change()
+    changed_namespace_file = namespace_file.create_bundle_change(
+        {"openshiftResources[1].version": 2}
+    )
     processor = build_change_type_process(secret_promoter_change_type)
     paths = processor.allowed_changed_paths(
         changed_namespace_file.fileref, changed_namespace_file.new
@@ -308,6 +321,7 @@ def test_bundle_change_diff_value_changed():
         new_file_content={"field": "new_value"},
     )
 
+    assert bundle_change
     assert len(bundle_change.diffs) == 1
     assert str(bundle_change.diffs[0].path) == "field"
     assert bundle_change.diffs[0].diff_type == DiffType.CHANGED
@@ -324,6 +338,7 @@ def test_bundle_change_diff_value_changed_deep():
         new_file_content={"parent": {"children": [{"age": 2}]}},
     )
 
+    assert bundle_change
     assert len(bundle_change.diffs) == 1
     assert str(bundle_change.diffs[0].path) == "parent.children.[0].age"
     assert bundle_change.diffs[0].diff_type == DiffType.CHANGED
@@ -395,6 +410,7 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -451,6 +467,7 @@ def test_bundle_change_diff_property_added():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -493,6 +510,7 @@ def test_bundle_change_diff_property_removed():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -540,6 +558,7 @@ def test_bundle_change_diff_item_added():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -592,6 +611,7 @@ def test_bundle_change_diff_item_removed():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -632,6 +652,7 @@ def test_bundle_change_diff_item_replaced():
             ],
         },
     )
+    assert bundle_change
 
     expected = [
         Diff(
@@ -668,7 +689,7 @@ def test_bundle_change_diff_item_reorder():
         },
     )
 
-    assert not bundle_change.diffs
+    assert not bundle_change
 
 
 #

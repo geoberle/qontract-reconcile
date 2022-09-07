@@ -74,7 +74,7 @@ class BundleFileChange:
     diffs: list[Diff]
 
     def extract_context_file_refs(
-        self, change_type: "ChangeTypeProcessor"
+        self, change_type: ChangeType
     ) -> list[FileRef]:
         """
         ChangeTypes are attached to bundle files, react to changes within
@@ -261,7 +261,7 @@ def create_bundle_file_change(
     file_type: BundleFileType,
     old_file_content: Any,
     new_file_content: Any,
-) -> BundleFileChange:
+) -> Optional[BundleFileChange]:
     """
     this is a factory method that creates a BundleFileChange object based
     on the old and new content of a file from app-interface. it detects differences
@@ -343,9 +343,12 @@ def create_bundle_file_change(
                 for path, change in deep_diff.get("iterable_item_removed", {}).items()
             ]
         )
-    return BundleFileChange(
-        fileref=fileref, old=old_file_content, new=new_file_content, diffs=diffs
-    )
+    if diffs:
+        return BundleFileChange(
+            fileref=fileref, old=old_file_content, new=new_file_content, diffs=diffs
+        )
+    else:
+        return None
 
 
 DEEP_DIFF_RE = re.compile(r"\['?(.*?)'?\]")
@@ -532,7 +535,7 @@ def cover_changes(
     change_types: list[ChangeType],
     comparision_gql_api: gql.GqlApi,
     saas_file_owner_change_type_name: Optional[str] = None,
-):
+) -> None:
     """
     Coordinating function that can reach out to different `cover_*` functions
     leveraging different approver contexts.
@@ -598,14 +601,15 @@ def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
             for c in bundle_changes["resources"].values()
         ]
     )
-    return change_list
+    # get rid of Nones - create_bundle_file_change returns None if no real change has been detected
+    return [c for c in change_list if c]
 
 
 def run(
     dry_run: bool,
     comparison_sha: str,
     saas_file_owner_change_type_name: Optional[str] = None,
-):
+) -> None:
     comparision_gql_api = gql.get_api_for_sha(
         comparison_sha, QONTRACT_INTEGRATION, validate_schemas=False
     )
