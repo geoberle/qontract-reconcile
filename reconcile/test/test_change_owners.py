@@ -420,7 +420,7 @@ def test_change_type_processor_allowed_paths_simple(
     changed_user_file = user_file.create_bundle_change()
     processor = ChangeTypeProcessor(change_type=role_member_change_type)
     paths = processor.allowed_changed_paths(
-        changed_user_file.fileref.schema, changed_user_file.new
+        changed_user_file.fileref, changed_user_file.new
     )
 
     assert paths == ["roles"]
@@ -432,7 +432,7 @@ def test_change_type_processor_allowed_paths_conditions(
     changed_namespace_file = namespace_file.create_bundle_change()
     processor = ChangeTypeProcessor(change_type=secret_promoter_change_type)
     paths = processor.allowed_changed_paths(
-        changed_namespace_file.fileref.schema, changed_namespace_file.new
+        changed_namespace_file.fileref, changed_namespace_file.new
     )
 
     assert paths == ["openshiftResources.[1].version"]

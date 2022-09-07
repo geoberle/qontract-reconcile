@@ -30,8 +30,8 @@ QONTRACT_INTEGRATION_VERSION = make_semver(0, 1, 0)
 
 
 class BundleFileType(Enum):
-    DATAFILE = 1
-    RESOURCEFILE = 2
+    DATAFILE = "datafile"
+    RESOURCEFILE = "resourcefile"
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,7 @@ class BundleFileChange:
             for (
                 allowed_path
             ) in change_type_context.change_type_processor.allowed_changed_paths(
-                self.fileref.schema, file_content
+                self.fileref, file_content
             ):
                 for d in filtered_diffs:
                     covered = str(d.path).startswith(allowed_path)
@@ -273,25 +273,35 @@ class ChangeTypeProcessor:
     change_type: ChangeType
 
     def __post_init__(self):
-        expressions_by_schema: dict[str, list[jsonpath_ng.JSONPath]] = defaultdict(list)
+        expressions_by_file_type_schema: dict[
+            (str, Optional[str]), list[jsonpath_ng.JSONPath]
+        ] = defaultdict(list)
         for c in self.change_type.changes or []:
             if isinstance(c, ChangeTypeChangeDetectorJsonPathProviderV1):
                 change_schema = c.change_schema or self.change_type.context_schema
                 if change_schema:
                     for jsonpath_expression in c.json_path_selectors or []:
-                        expressions_by_schema[change_schema].append(
-                            jsonpath_ng.ext.parse(jsonpath_expression)
-                        )
+                        file_type = BundleFileType[
+                            self.change_type.context_type.upper()
+                        ]
+                        expressions_by_file_type_schema[
+                            (file_type, change_schema)
+                        ].append(jsonpath_ng.ext.parse(jsonpath_expression))
             else:
                 raise ValueError(
                     f"{c.provider} is not a supported change detection provider within ChangeTypes"
                 )
-        self.expressions_by_schema = expressions_by_schema
+        self.expressions_by_file_type_schema = expressions_by_file_type_schema
 
-    def allowed_changed_paths(self, schema: str, file_content: Any) -> list[str]:
+    def allowed_changed_paths(self, file_ref: FileRef, file_content: Any) -> list[str]:
         paths = []
-        if schema in self.expressions_by_schema:
-            for change_type_path_expression in self.expressions_by_schema[schema]:
+        if (
+            file_ref.file_type,
+            file_ref.schema,
+        ) in self.expressions_by_file_type_schema:
+            for change_type_path_expression in self.expressions_by_file_type_schema[
+                (file_ref.file_type, file_ref.schema)
+            ]:
                 paths.extend(
                     [
                         str(p.full_path)
@@ -429,7 +439,7 @@ def cover_changes(
 
 def run(dry_run: bool, comparison_sha: str):
     comparision_gql_api = gql.get_api_for_sha(
-        comparison_sha, QONTRACT_INTEGRATION, validate_schemas=False
+        comparison_sha, QONTRACT_INTEGRATION, validate_schemas=True
     )
 
     changes = find_bundle_changes(comparison_sha)
