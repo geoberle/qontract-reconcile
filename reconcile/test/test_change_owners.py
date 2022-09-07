@@ -750,6 +750,67 @@ def test_bundle_change_diff_item_removed():
     assert bundle_change.diffs == expected
 
 
+def test_bundle_change_diff_item_replaced():
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
+        old={
+            "$schema": "/access/user-1.yml",
+            "roles": [
+                {"$ref": "an_item"},
+                {"$ref": "old_item"},
+                {"$ref": "another_item"},
+            ],
+        },
+        new={
+            "$schema": "/access/user-1.yml",
+            "roles": [
+                {"$ref": "an_item"},
+                {"$ref": "new_item"},
+                {"$ref": "another_item"},
+            ],
+        },
+    )
+
+    expected = [
+        Diff(
+            path=jsonpath_ng.parse("roles.[1].'$ref'"),
+            diff_type=DiffType.CHANGED,
+            old="old_item",
+            new="new_item",
+            covered_by=[],
+        ),
+    ]
+    assert bundle_change.diffs == expected
+
+
+def test_bundle_change_diff_item_reorder():
+    bundle_change = create_bundle_file_change(
+        path="path",
+        schema="/access/user-1.yml",
+        file_type=BundleFileType.DATAFILE,
+        old={
+            "$schema": "/access/user-1.yml",
+            "roles": [
+                {"$ref": "an_item"},
+                {"$ref": "reorder_item"},
+                {"$ref": "another_item"},
+            ],
+        },
+        new={
+            "$schema": "/access/user-1.yml",
+            "roles": [
+                {"$ref": "an_item"},
+                {"$ref": "another_item"},
+                {"$ref": "reorder_item"},
+            ],
+        },
+    )
+
+    assert bundle_change.diffs == []
+
+
 #
 # processing change coverage on a change type context
 #
