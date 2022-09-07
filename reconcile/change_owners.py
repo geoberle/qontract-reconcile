@@ -50,7 +50,7 @@ class DiffType(Enum):
 @dataclass
 class Diff:
     path: jsonpath_ng.JSONPath
-    diff_type: DiffType  # e.g. added, changed
+    diff_type: DiffType
     old: Optional[Any]
     new: Optional[Any]
     covered_by: list["ChangeTypeContext"]
@@ -63,8 +63,62 @@ class BundleFileChange:
     new: Optional[dict[str, Any]]
     diffs: list[Diff]
 
+    def cover_changes(self, change_type_context: "ChangeTypeContext") -> list[Diff]:
+        covered_diffs = {}
+        covered_diffs.update(
+            self._cover_changes_for_diff_types(
+                [DiffType.ADDED, DiffType.CHANGED], self.new, change_type_context
+            )
+        )
+        covered_diffs.update(
+            self._cover_changes_for_diff_types(
+                [DiffType.REMOVED], self.old, change_type_context
+            )
+        )
+        return list(covered_diffs.values())
 
-def compare_ctx_identifier(x: Any, y: Any):
+    def _cover_changes_for_diff_types(
+        self,
+        diff_types: list[DiffType],
+        file_content: Any,
+        change_type_context: "ChangeTypeContext",
+    ) -> dict[str, Diff]:
+        covered_diffs = {}
+        filtered_diffs = self._filter_diffs(diff_types)
+        if filtered_diffs:
+            for (
+                allowed_path
+            ) in change_type_context.change_type_processor.allowed_changed_paths(
+                self.fileref.schema, file_content
+            ):
+                for d in filtered_diffs:
+                    covered = str(d.path).startswith(allowed_path)
+                    if covered:
+                        covered_diffs[str(d.path)] = d
+                        d.covered_by.append(change_type_context)
+        return covered_diffs
+
+    def _filter_diffs(self, diff_types: list[DiffType]) -> list[Diff]:
+        return list(filter(lambda d: d.diff_type in diff_types, self.diffs))
+
+
+def compare_object_ctx_identifier(x: Any, y: Any):
+    """
+    this function helps the deepdiff library to decide if two objects are
+    actually the same in the sense of identity. this helps with finding
+    changes in lists where reordering items might occure.
+    the __identifier key of an object is maintained by the qontract-validator
+    based on the contextUnique flags on properties in jsonschemas of qontract-schema.
+
+    in a list of heterogenous elements (e.g. openshiftResources), not every element
+    necessarily has an __identitry property, e.g. vault-secret elements have one,
+    but resource-template elements don't (because there is no set of properties
+    clearly identifying the resulting resource).
+
+    if two objects with no identity properties are compared, deepdiff will still
+    try to figure out if they might be the same object based on a critical number
+    of unique properties.
+    """
     x_id = x.get("__identifier")
     y_id = y.get("__identifier")
     if x_id and y_id:
@@ -73,6 +127,8 @@ def compare_ctx_identifier(x: Any, y: Any):
     if x_id or y_id:
         # if only one of them has an identifier, they must be different objects
         return False
+    # raising this exception is a signal to deepdiff to heuristically determine
+    # if two objects are the same
     raise CannotCompare() from None
 
 
@@ -87,7 +143,10 @@ def create_bundle_file_change(
     diffs: list[Diff] = []
     if old and new:
         deep_diff = DeepDiff(
-            old, new, ignore_order=True, iterable_compare_func=compare_ctx_identifier
+            old,
+            new,
+            ignore_order=True,
+            iterable_compare_func=compare_object_ctx_identifier,
         )
         # handle changed values
         diffs.extend(
@@ -229,17 +288,14 @@ class ChangeTypeProcessor:
                 )
         self.expressions_by_schema = expressions_by_schema
 
-    def allowed_changed_paths(self, bundle_change: BundleFileChange) -> list[str]:
+    def allowed_changed_paths(self, schema: str, file_content: Any) -> list[str]:
         paths = []
-        if bundle_change.fileref.schema in self.expressions_by_schema:
-            for change_type_path_expression in self.expressions_by_schema[
-                bundle_change.fileref.schema
-            ]:
-                # todo(goberlec) only new??
+        if schema in self.expressions_by_schema:
+            for change_type_path_expression in self.expressions_by_schema[schema]:
                 paths.extend(
                     [
                         str(p.full_path)
-                        for p in change_type_path_expression.find(bundle_change.new)
+                        for p in change_type_path_expression.find(file_content)
                     ]
                 )
         return paths
@@ -251,15 +307,6 @@ class ChangeTypeContext:
     context_type: str
     context: str
     approvers: list[Approver]
-
-    def cover_changes(self, bundle_change: BundleFileChange):
-        for allowed_path in self.change_type_processor.allowed_changed_paths(
-            bundle_change
-        ):
-            for diff in bundle_change.diffs:
-                covered = str(diff.path).startswith(allowed_path)
-                if covered:
-                    diff.covered_by.append(self)
 
 
 def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
@@ -377,7 +424,7 @@ def cover_changes(
     for c in changes:
         if c.fileref in contexts:
             for ctx in contexts[c.fileref]:
-                ctx.cover_changes(c)
+                c.cover_changes(ctx)
 
 
 def run(dry_run: bool, comparison_sha: str):

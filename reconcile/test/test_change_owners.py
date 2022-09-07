@@ -419,7 +419,9 @@ def test_change_type_processor_allowed_paths_simple(
 ):
     changed_user_file = user_file.create_bundle_change()
     processor = ChangeTypeProcessor(change_type=role_member_change_type)
-    paths = processor.allowed_changed_paths(changed_user_file)
+    paths = processor.allowed_changed_paths(
+        changed_user_file.fileref.schema, changed_user_file.new
+    )
 
     assert paths == ["roles"]
 
@@ -429,7 +431,9 @@ def test_change_type_processor_allowed_paths_conditions(
 ):
     changed_namespace_file = namespace_file.create_bundle_change()
     processor = ChangeTypeProcessor(change_type=secret_promoter_change_type)
-    paths = processor.allowed_changed_paths(changed_namespace_file)
+    paths = processor.allowed_changed_paths(
+        changed_namespace_file.fileref.schema, changed_namespace_file.new
+    )
 
     assert paths == ["openshiftResources.[1].version"]
 
@@ -808,7 +812,7 @@ def test_bundle_change_diff_item_reorder():
         },
     )
 
-    assert bundle_change.diffs == []
+    assert not bundle_change.diffs
 
 
 #
@@ -828,10 +832,9 @@ def test_cover_changes_one_file(
         context="some-role",
         approvers=[UserV1(org_username="user")],
     )
-    ctx.cover_changes(saas_file_change)
-
-    for diff in saas_file_change.diffs:
-        assert diff.covered_by == [ctx]
+    covered_diffs = saas_file_change.cover_changes(ctx)
+    assert covered_diffs == saas_file_change.diffs
+    assert saas_file_change.diffs[0].covered_by == [ctx]
 
 
 def test_uncover_change_one_file(
@@ -844,7 +847,7 @@ def test_uncover_change_one_file(
         context="some-role",
         approvers=[UserV1(org_username="user")],
     )
-    ctx.cover_changes(saas_file_change)
+    saas_file_change.cover_changes(ctx)
 
     for diff in saas_file_change.diffs:
         assert diff.covered_by == []
@@ -853,8 +856,12 @@ def test_uncover_change_one_file(
 def test_partially_covered_change_one_file(
     saas_file_changetype: ChangeType, saas_file: TestDatafile
 ):
+    ref_update_path = "resourceTemplates.[0].targets.[0].ref"
     saas_file_change = saas_file.create_bundle_change(
-        {"resourceTemplates[0].targets[0].ref": "new-ref", "name": "new-name"}
+        {ref_update_path: "new-ref", "name": "new-name"}
+    )
+    ref_update_diff = next(
+        d for d in saas_file_change.diffs if str(d.path) == ref_update_path
     )
     ctx = ChangeTypeContext(
         change_type_processor=ChangeTypeProcessor(saas_file_changetype),
@@ -862,15 +869,9 @@ def test_partially_covered_change_one_file(
         context="some-role",
         approvers=[UserV1(org_username="user")],
     )
-    ctx.cover_changes(saas_file_change)
 
-    for diff in saas_file_change.diffs:
-        if str(diff.path) == "name":
-            assert diff.covered_by == []
-        elif str(diff.path) == "resourceTemplates.[0].targets.[0].ref":
-            assert diff.covered_by == [ctx]
-        else:
-            pytest.fail(f"unexpected change path {str(diff.path)}")
+    covered_diffs = saas_file_change.cover_changes(ctx)
+    assert [ref_update_diff] == covered_diffs
 
 
 #
@@ -924,7 +925,7 @@ def test_e2e_change_coverage(
     for bc in bundle_changes:
         if bc.fileref in contexts:
             for ctx in contexts[bc.fileref]:
-                ctx.cover_changes(bc)
+                bc.cover_changes(ctx)
         for d in bc.diffs:
             if str(d.path) == "roles.[0].$ref":
                 expected_approver = role_approver_user
