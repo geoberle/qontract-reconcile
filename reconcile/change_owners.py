@@ -49,6 +49,10 @@ class DiffType(Enum):
 
 @dataclass
 class Diff:
+    """
+    A change within a file, pinpointing the location of the change with a jsonpath.
+    """
+
     path: jsonpath_ng.JSONPath
     diff_type: DiffType
     old: Optional[Any]
@@ -58,20 +62,86 @@ class Diff:
 
 @dataclass
 class BundleFileChange:
+    """
+    Represents a file within an app-interface bundle that changed during an MR.
+    It holds the old and new state of that file, along with precis differences
+    between those states.
+    """
+
     fileref: FileRef
     old: Optional[dict[str, Any]]
     new: Optional[dict[str, Any]]
     diffs: list[Diff]
 
-    def extract_datafile_context_from_bundle_change(
-        self, change_type: ChangeType
+    def extract_context_file_refs(
+        self, change_type: "ChangeTypeProcessor"
     ) -> list[FileRef]:
+        """
+        ChangeTypes are attached to bundle files, react to changes within
+        them and use their context to derive who can approve those changes.
+        Extracting this context be done in two ways depending on the configuration
+        of the ChangeType.
+
+        direct context extraction
+          If a ChangeType defines a `context_schema`, it can be attached to files
+          of that schema. If such a file changes, the ChangeType feels responsible
+          for it in subsequent diff coverage calculations and will use the approvers
+          that exist in the context of that changed file. This is the default
+          mode almost all ChangeTypes operate in.
+
+          Example: a ChangeType defines `/openshift/namespace-1.yml` as the
+          context_schema and can cover certain changes in it. If this ChangeType
+          is attached to certain namespace files (potential BundleChanges) and
+          a Role (context), changes in those namespace files can be approved by
+          members of the role.
+
+        context detection
+          If a ChangeType additionally defines change_schemas and context selectors,
+          it has the capability to differentiate between reacting to changes
+          (and trying to cover them) and finding the context where approvers are
+          defined.
+
+          Example: Consider the following ChangeType granting permissions to
+          approve on new members wanting to join a role.
+          ```
+            $schema: /app-interface/change-type-1.yml
+
+            contextType: datafile
+            contextSchema: /access/roles-1.yml
+
+            changes:
+            - provider: jsonPath
+              changeSchema: /access/user-1.yml
+              jsonPathSelectors:
+              - roles[*]
+              context:
+                selector: roles[*].'$ref'
+                when: added
+          ```
+
+          Users join a role by adding the role to the user. This means that it
+          is a /access/user-1.yml file that changes in this situation. But permissions
+          to approve changes should be attached to the role not the user. This
+          ChangeTypes takes care of that differentiation by defining /access/role-1.yml
+          as the context schema (making the ChangeType assignable to a role)
+          but defining change detection on /access/user-1.yml via the `changeSchema`.
+          The actual role can be found within the userfile by looking for `added`
+          entries under `roles[*].$ref` (this is a jsonpath expression) as defined
+          under `context.selector`.
+        """
         if not change_type.changes:
             return []
 
+        # direct context extraction
+        # the changed file itself is giving the context for approver extraction
+        # see doc string for more details
         if change_type.context_schema == self.fileref.schema:
             return [self.fileref]
 
+        # context detection
+        # the context for approver extraction can be found within the changed
+        # file with a `context.selector`
+        # see doc string for more details
         contexts: list[FileRef] = []
         for c in change_type.changes:
             if c.change_schema == self.fileref.schema and c.context:
@@ -96,18 +166,26 @@ class BundleFileChange:
 
     def cover_changes(self, change_type_context: "ChangeTypeContext") -> list[Diff]:
         """
-        check if a change type context
+        Figure out if a ChangeType covers detected changes within the BundleFile.
+        Base idea:
+        * a ChangeType defines path patterns that are considered self-approvable
+        * if a change (diff) is located under one of the allowed paths of the
+          ChangeType, it is considered "covered" by that ChangeType in a certain
+          context (e.g. a RoleV1) and allows the approvers of that context (e.g.
+          the members of that role) to approve that particular change.
+        The ChangeTypeContexts that cover a change, are registered within the
+        `Diff` objects `covered_by` list.
         """
         covered_diffs = {}
-        # for added fields or list items or entire object sutrees, the new
-        # state is observed, because it contains the new data
+        # observe the new state for added fields or list items or entire object sutrees
         covered_diffs.update(
             self._cover_changes_for_diffs(
-                self._filter_diffs([DiffType.ADDED, DiffType.CHANGED]), self.new, change_type_context
+                self._filter_diffs([DiffType.ADDED, DiffType.CHANGED]),
+                self.new,
+                change_type_context,
             )
         )
-        # for removed fields or lists items or object subtrees, the old state is
-        # observed, because it still contains the removed data
+        # look at the old state for removed fields or list items or object subtrees
         covered_diffs.update(
             self._cover_changes_for_diffs(
                 self._filter_diffs([DiffType.REMOVED]), self.old, change_type_context
@@ -276,10 +354,10 @@ DEEP_DIFF_RE = re.compile(r"\['?(.*?)'?\]")
 def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
     """
     deepdiff's way to describe a path within a data structure differs from jsonpath.
-    this function translates deepdiff paths into regular jsonpath expressions.
+    This function translates deepdiff paths into regular jsonpath expressions.
 
     deepdiff paths start with "root" followed by a series of square bracket expressions
-    fields and indices, e.g. `root['openshiftResources'][1]['version']`. the matching
+    fields and indices, e.g. `root['openshiftResources'][1]['version']`. The matching
     jsonpath expression is `openshiftResources.[1].version`
     """
 
@@ -298,33 +376,15 @@ def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
 @dataclass
 class ChangeTypeProcessor:
     """
-    The datasclass ChangeTypeProcessor wraps the generated GQL class ChangeType
-    and adds functionality that operates close on the configuration of the
-    ChangeType.
+    ChangeTypeProcessor wraps the generated GQL class ChangeType and adds
+    functionality that operates close on the configuration of the ChangeType,
+    like computing the jsonpaths that are allowed to change in a file.
     """
 
     change_type: ChangeType
-
-    def __post_init__(self):
-        expressions_by_file_type_schema: dict[
-            Tuple[BundleFileType, Optional[str]], list[jsonpath_ng.JSONPath]
-        ] = defaultdict(list)
-        for c in self.change_type.changes or []:
-            if isinstance(c, ChangeTypeChangeDetectorJsonPathProviderV1):
-                change_schema = c.change_schema or self.change_type.context_schema
-                if change_schema:
-                    for jsonpath_expression in c.json_path_selectors or []:
-                        file_type = BundleFileType[
-                            self.change_type.context_type.upper()
-                        ]
-                        expressions_by_file_type_schema[
-                            (file_type, change_schema)
-                        ].append(jsonpath_ng.ext.parse(jsonpath_expression))
-            else:
-                raise ValueError(
-                    f"{c.provider} is not a supported change detection provider within ChangeTypes"
-                )
-        self.expressions_by_file_type_schema = expressions_by_file_type_schema
+    expressions_by_file_type_schema: dict[
+        Tuple[BundleFileType, Optional[str]], list[jsonpath_ng.JSONPath]
+    ]
 
     def allowed_changed_paths(self, file_ref: FileRef, file_content: Any) -> list[str]:
         """
@@ -349,7 +409,40 @@ class ChangeTypeProcessor:
         return paths
 
 
+def build_change_type_process(change_type: ChangeType) -> ChangeTypeProcessor:
+    """
+    Build a ChangeTypeProcessor from a ChangeType and pre-initializing jsonpaths.
+    """
+    expressions_by_file_type_schema: dict[
+        Tuple[BundleFileType, Optional[str]], list[jsonpath_ng.JSONPath]
+    ] = defaultdict(list)
+    for c in change_type.changes or []:
+        if isinstance(c, ChangeTypeChangeDetectorJsonPathProviderV1):
+            change_schema = c.change_schema or change_type.context_schema
+            if change_schema:
+                for jsonpath_expression in c.json_path_selectors or []:
+                    file_type = BundleFileType[change_type.context_type.upper()]
+                    expressions_by_file_type_schema[(file_type, change_schema)].append(
+                        jsonpath_ng.ext.parse(jsonpath_expression)
+                    )
+        else:
+            raise ValueError(
+                f"{c.provider} is not a supported change detection provider within ChangeTypes"
+            )
+    return ChangeTypeProcessor(
+        change_type=change_type,
+        expressions_by_file_type_schema=expressions_by_file_type_schema,
+    )
+
+
 class Approver(Protocol):
+    """
+    Minimalistic protocol of an approver to be used in ChangeTypeContexts.
+    Since we might load different approver contexts via GraphQL query classes,
+    a protocol enables us to deal with different dataclasses representing an
+    approver.
+    """
+
     org_username: str
 
 
@@ -380,11 +473,11 @@ def cover_changes_with_self_service_roles(
     saas_file_owner_change_type_name: Optional[str] = None,
 ) -> None:
     """
-    cover changes with ChangeTypes associated to datafiles and resources via a
+    Cover changes with ChangeTypes associated to datafiles and resources via a
     RoleV1 saas_file_owners and self_service configuration.
     """
 
-    # role lookup enables fast lookup for (filetype, filepath, changetype-name) to a role
+    # role lookup enables fast lookup roles for (filetype, filepath, changetype-name)
     role_lookup: dict[Tuple[BundleFileType, str, str], list[RoleV1]] = defaultdict(list)
     for r in roles:
         # build role lookup for owned_saas_files section of a role
@@ -415,11 +508,10 @@ def cover_changes_with_self_service_roles(
                                 (BundleFileType.RESOURCEFILE, res, ss.change_type.name)
                             ].append(r)
 
+    # match every BundleChange with every relevant ChangeType
     for bc in bundle_changes:
         for ctp in change_type_processors:
-            datafile_refs = bc.extract_datafile_context_from_bundle_change(
-                ctp.change_type
-            )
+            datafile_refs = bc.extract_context_file_refs(ctp.change_type)
             for df_ref in datafile_refs:
                 # if the context file is bound with the change type in
                 # a role, build a changetypecontext
@@ -441,8 +533,11 @@ def cover_changes(
     comparision_gql_api: gql.GqlApi,
     saas_file_owner_change_type_name: Optional[str] = None,
 ):
-    # wrap changetypes
-    change_type_processors = [ChangeTypeProcessor(ct) for ct in change_types]
+    """
+    Coordinating function that can reach out to different `cover_*` functions
+    leveraging different approver contexts.
+    """
+    change_type_processors = [build_change_type_process(ct) for ct in change_types]
 
     # self service roles coverage
     roles = fetch_self_service_roles(comparision_gql_api)
@@ -452,6 +547,12 @@ def cover_changes(
         roles=roles,
         saas_file_owner_change_type_name=saas_file_owner_change_type_name,
     )
+
+    # ... add more cover_* functions to cover more changes based on dynamic
+    # or static contexts. some ideas:
+    # - users should be able to change certain things in their user file without
+    #   explicit configuration in app-interface
+    # - ...
 
 
 def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
@@ -465,6 +566,11 @@ def fetch_change_types(gql_api: gql.GqlApi) -> list[ChangeType]:
 
 
 def find_bundle_changes(comparison_sha: str) -> list[BundleFileChange]:
+    """
+    reaches out to the qontract-server diff endpoint to find the files that
+    changed within two bundles (the current one representing the MR and the
+    explicitely passed comparision bundle - usually the state of the master branch).
+    """
     changes = gql.get_diff(comparison_sha)
     return _parse_bundle_changes(changes)
 
@@ -568,6 +674,6 @@ def print_table(content, columns, table_format="simple"):
 
 
 # todo
-# write docs
+# dry-run mode
+# refactor table rendering (dedup with qontract-cli)
 # write PR comment
-# dedup code in create_bundle_file_change

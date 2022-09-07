@@ -4,10 +4,10 @@ from reconcile.change_owners import (
     BundleFileChange,
     BundleFileType,
     ChangeTypeContext,
-    ChangeTypeProcessor,
     Diff,
     DiffType,
     FileRef,
+    build_change_type_process,
     create_bundle_file_change,
     cover_changes_with_self_service_roles,
     deep_diff_path_to_jsonpath,
@@ -130,11 +130,11 @@ def namespace_file() -> TestDatafile:
 
 
 #
-# testcases for context extraction from bundle changes
+# testcases for context file refs extraction from bundle changes
 #
 
 
-def test_extract_datafile_context_from_bundle_change(
+def test_extract_context_file_refs_from_bundle_change(
     saas_file_changetype: ChangeType, saas_file: TestDatafile
 ):
     """
@@ -143,13 +143,11 @@ def test_extract_datafile_context_from_bundle_change(
     datafile
     """
     bundle_change = saas_file.create_bundle_change()
-    datafile_context = bundle_change.extract_datafile_context_from_bundle_change(
-        saas_file_changetype
-    )
-    assert datafile_context == [saas_file.file_ref()]
+    file_refs = bundle_change.extract_context_file_refs(saas_file_changetype)
+    assert file_refs == [saas_file.file_ref()]
 
 
-def test_extract_datafile_context_from_bundle_change_schema_mismatch(
+def test_extract_context_file_refs_from_bundle_change_schema_mismatch(
     saas_file_changetype: ChangeType, saas_file: TestDatafile
 ):
     """
@@ -158,13 +156,11 @@ def test_extract_datafile_context_from_bundle_change_schema_mismatch(
     """
     saas_file.datafileschema = "/some/other/schema.yml"
     bundle_change = saas_file.create_bundle_change()
-    datafile_context = bundle_change.extract_datafile_context_from_bundle_change(
-        saas_file_changetype
-    )
-    assert not datafile_context
+    file_refs = bundle_change.extract_context_file_refs(saas_file_changetype)
+    assert not file_refs
 
 
-def test_extract_added_selector_datafile_context_from_bundle_change(
+def test_extract_context_file_refs_added_selector(
     role_member_change_type: ChangeType,
 ):
     """
@@ -187,10 +183,8 @@ def test_extract_added_selector_datafile_context_from_bundle_change(
             "roles": [{"$ref": "/role/existing.yml"}, {"$ref": new_role}],
         },
     )
-    datafile_context = user_change.extract_datafile_context_from_bundle_change(
-        role_member_change_type
-    )
-    assert datafile_context == [
+    file_refs = user_change.extract_context_file_refs(role_member_change_type)
+    assert file_refs == [
         FileRef(
             file_type=BundleFileType.DATAFILE,
             schema="/access/roles-1.yml",
@@ -199,7 +193,7 @@ def test_extract_added_selector_datafile_context_from_bundle_change(
     ]
 
 
-def test_extract_removed_selector_datafile_context_from_bundle_change(
+def test_extract_context_file_refs_removed_selector(
     role_member_change_type: ChangeType,
 ):
     """
@@ -220,10 +214,8 @@ def test_extract_removed_selector_datafile_context_from_bundle_change(
             "roles": [{"$ref": new_role}],
         },
     )
-    datafile_context = user_change.extract_datafile_context_from_bundle_change(
-        role_member_change_type
-    )
-    assert datafile_context == [
+    file_refs = user_change.extract_context_file_refs(role_member_change_type)
+    assert file_refs == [
         FileRef(
             file_type=BundleFileType.DATAFILE,
             schema="/access/roles-1.yml",
@@ -232,7 +224,7 @@ def test_extract_removed_selector_datafile_context_from_bundle_change(
     ]
 
 
-def test_extract_selector_datafile_context_from_bundle_change_schema_mismatch(
+def test_extract_context_file_refs_selector_change_schema_mismatch(
     role_member_change_type: ChangeType,
 ):
     """
@@ -246,10 +238,8 @@ def test_extract_selector_datafile_context_from_bundle_change_schema_mismatch(
         old_file_content=None,
         new_file_content=None,
     )
-    datafile_context = datafile_change.extract_datafile_context_from_bundle_change(
-        role_member_change_type
-    )
-    assert not datafile_context
+    file_refs = datafile_change.extract_context_file_refs(role_member_change_type)
+    assert not file_refs
 
 
 def test_with_a_context_selector_where_the_datafile_has_no_matching_section():
@@ -284,7 +274,7 @@ def test_change_type_processor_allowed_paths_simple(
     role_member_change_type: ChangeType, user_file: TestDatafile
 ):
     changed_user_file = user_file.create_bundle_change()
-    processor = ChangeTypeProcessor(change_type=role_member_change_type)
+    processor = build_change_type_process(role_member_change_type)
     paths = processor.allowed_changed_paths(
         changed_user_file.fileref, changed_user_file.new
     )
@@ -296,7 +286,7 @@ def test_change_type_processor_allowed_paths_conditions(
     secret_promoter_change_type: ChangeType, namespace_file: TestDatafile
 ):
     changed_namespace_file = namespace_file.create_bundle_change()
-    processor = ChangeTypeProcessor(change_type=secret_promoter_change_type)
+    processor = build_change_type_process(secret_promoter_change_type)
     paths = processor.allowed_changed_paths(
         changed_namespace_file.fileref, changed_namespace_file.new
     )
@@ -693,7 +683,7 @@ def test_cover_changes_one_file(
         {"resourceTemplates[0].targets[0].ref": "new-ref"}
     )
     ctx = ChangeTypeContext(
-        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        change_type_processor=build_change_type_process(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -707,7 +697,7 @@ def test_uncovered_change_one_file(
 ):
     saas_file_change = saas_file.create_bundle_change({"name": "new-name"})
     ctx = ChangeTypeContext(
-        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        change_type_processor=build_change_type_process(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -728,7 +718,7 @@ def test_partially_covered_change_one_file(
         d for d in saas_file_change.diffs if str(d.path) == ref_update_path
     )
     ctx = ChangeTypeContext(
-        change_type_processor=ChangeTypeProcessor(saas_file_changetype),
+        change_type_processor=build_change_type_process(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -781,7 +771,10 @@ def test_change_coverage(
 
     cover_changes_with_self_service_roles(
         roles=[role_approval_role, secret_promoter_role],
-        change_type_processors=[ChangeTypeProcessor(role_member_change_type), ChangeTypeProcessor(secret_promoter_change_type)],
+        change_type_processors=[
+            build_change_type_process(role_member_change_type),
+            build_change_type_process(secret_promoter_change_type),
+        ],
         bundle_changes=bundle_changes,
     )
 
