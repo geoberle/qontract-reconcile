@@ -375,12 +375,14 @@ class ChangeTypeContext:
 
 def cover_changes_with_self_service_roles(
     roles: list[RoleV1],
-    change_types: list[ChangeType],
+    change_type_processors: list[ChangeTypeProcessor],
     bundle_changes: list[BundleFileChange],
     saas_file_owner_change_type_name: Optional[str] = None,
 ) -> None:
-    # wrap changetypes
-    change_type_processors = [ChangeTypeProcessor(ct) for ct in change_types]
+    """
+    cover changes with ChangeTypes associated to datafiles and resources via a
+    RoleV1 saas_file_owners and self_service configuration.
+    """
 
     # role lookup enables fast lookup for (filetype, filepath, changetype-name) to a role
     role_lookup: dict[Tuple[BundleFileType, str, str], list[RoleV1]] = defaultdict(list)
@@ -439,11 +441,14 @@ def cover_changes(
     comparision_gql_api: gql.GqlApi,
     saas_file_owner_change_type_name: Optional[str] = None,
 ):
+    # wrap changetypes
+    change_type_processors = [ChangeTypeProcessor(ct) for ct in change_types]
+
     # self service roles coverage
     roles = fetch_self_service_roles(comparision_gql_api)
     cover_changes_with_self_service_roles(
         bundle_changes=changes,
-        change_types=change_types,
+        change_type_processors=change_type_processors,
         roles=roles,
         saas_file_owner_change_type_name=saas_file_owner_change_type_name,
     )

@@ -781,7 +781,7 @@ def test_change_coverage(
 
     cover_changes_with_self_service_roles(
         roles=[role_approval_role, secret_promoter_role],
-        change_types=[role_member_change_type, secret_promoter_change_type],
+        change_type_processors=[ChangeTypeProcessor(role_member_change_type), ChangeTypeProcessor(secret_promoter_change_type)],
         bundle_changes=bundle_changes,
     )
 
