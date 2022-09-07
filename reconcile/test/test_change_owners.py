@@ -11,7 +11,6 @@ from reconcile.change_owners import (
     create_bundle_file_change,
     cover_changes_with_self_service_roles,
     deep_diff_path_to_jsonpath,
-    extract_datafile_context_from_bundle_change,
 )
 from reconcile.gql_definitions.change_owners.fragments.change_type import ChangeType
 from reconcile.gql_definitions.change_owners.queries.self_service_roles import (
@@ -143,8 +142,9 @@ def test_extract_datafile_context_from_bundle_change(
     of the change type, so the change type is directly relevant for the changed
     datafile
     """
-    datafile_context = extract_datafile_context_from_bundle_change(
-        saas_file.create_bundle_change(), saas_file_changetype
+    bundle_change = saas_file.create_bundle_change()
+    datafile_context = bundle_change.extract_datafile_context_from_bundle_change(
+        saas_file_changetype
     )
     assert datafile_context == [saas_file.file_ref()]
 
@@ -157,8 +157,9 @@ def test_extract_datafile_context_from_bundle_change_schema_mismatch(
     change types do not match and hence to context is extracted.
     """
     saas_file.datafileschema = "/some/other/schema.yml"
-    datafile_context = extract_datafile_context_from_bundle_change(
-        saas_file.create_bundle_change(), saas_file_changetype
+    bundle_change = saas_file.create_bundle_change()
+    datafile_context = bundle_change.extract_datafile_context_from_bundle_change(
+        saas_file_changetype
     )
     assert not datafile_context
 
@@ -186,8 +187,8 @@ def test_extract_added_selector_datafile_context_from_bundle_change(
             "roles": [{"$ref": "/role/existing.yml"}, {"$ref": new_role}],
         },
     )
-    datafile_context = extract_datafile_context_from_bundle_change(
-        user_change, role_member_change_type
+    datafile_context = user_change.extract_datafile_context_from_bundle_change(
+        role_member_change_type
     )
     assert datafile_context == [
         FileRef(
@@ -219,8 +220,8 @@ def test_extract_removed_selector_datafile_context_from_bundle_change(
             "roles": [{"$ref": new_role}],
         },
     )
-    datafile_context = extract_datafile_context_from_bundle_change(
-        user_change, role_member_change_type
+    datafile_context = user_change.extract_datafile_context_from_bundle_change(
+        role_member_change_type
     )
     assert datafile_context == [
         FileRef(
@@ -245,8 +246,8 @@ def test_extract_selector_datafile_context_from_bundle_change_schema_mismatch(
         old_file_content=None,
         new_file_content=None,
     )
-    datafile_context = extract_datafile_context_from_bundle_change(
-        datafile_change, role_member_change_type
+    datafile_context = datafile_change.extract_datafile_context_from_bundle_change(
+        role_member_change_type
     )
     assert not datafile_context
 

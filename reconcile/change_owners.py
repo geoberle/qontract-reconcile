@@ -63,6 +63,37 @@ class BundleFileChange:
     new: Optional[dict[str, Any]]
     diffs: list[Diff]
 
+    def extract_datafile_context_from_bundle_change(
+        self, change_type: ChangeType
+    ) -> list[FileRef]:
+        if not change_type.changes:
+            return []
+
+        if change_type.context_schema == self.fileref.schema:
+            return [self.fileref]
+
+        contexts: list[FileRef] = []
+        for c in change_type.changes:
+            if c.change_schema == self.fileref.schema and c.context:
+                context_selector = jsonpath_ng.ext.parse(c.context.selector)
+                old_contexts = {e.value for e in context_selector.find(self.old)}
+                new_contexts = {e.value for e in context_selector.find(self.new)}
+                if c.context.when == "added":
+                    affected_context_paths = new_contexts - old_contexts
+                elif c.context.when == "removed":
+                    affected_context_paths = old_contexts - new_contexts
+                contexts.extend(
+                    [
+                        FileRef(
+                            schema=change_type.context_schema,
+                            path=path,
+                            file_type=BundleFileType.DATAFILE,
+                        )
+                        for path in affected_context_paths
+                    ]
+                )
+        return contexts
+
     def cover_changes(self, change_type_context: "ChangeTypeContext") -> list[Diff]:
         covered_diffs = {}
         covered_diffs.update(
@@ -219,38 +250,6 @@ def create_bundle_file_change(
 
 class Approver(Protocol):
     org_username: str
-
-
-def extract_datafile_context_from_bundle_change(
-    bundle_change: BundleFileChange, change_type: ChangeType
-) -> list[FileRef]:
-    if not change_type.changes:
-        return []
-
-    if change_type.context_schema == bundle_change.fileref.schema:
-        return [bundle_change.fileref]
-
-    contexts: list[FileRef] = []
-    for c in change_type.changes:
-        if c.change_schema == bundle_change.fileref.schema and c.context:
-            context_selector = jsonpath_ng.ext.parse(c.context.selector)
-            old_contexts = {e.value for e in context_selector.find(bundle_change.old)}
-            new_contexts = {e.value for e in context_selector.find(bundle_change.new)}
-            if c.context.when == "added":
-                affected_context_paths = new_contexts - old_contexts
-            elif c.context.when == "removed":
-                affected_context_paths = old_contexts - new_contexts
-            contexts.extend(
-                [
-                    FileRef(
-                        schema=change_type.context_schema,
-                        path=path,
-                        file_type=BundleFileType.DATAFILE,
-                    )
-                    for path in affected_context_paths
-                ]
-            )
-    return contexts
 
 
 DEEP_DIFF_RE = re.compile(r"\['?(.*?)'?\]")
@@ -431,8 +430,8 @@ def cover_changes_with_self_service_roles(
 
     for bc in bundle_changes:
         for ctp in change_type_processors:
-            datafile_refs = extract_datafile_context_from_bundle_change(
-                bc, ctp.change_type
+            datafile_refs = bc.extract_datafile_context_from_bundle_change(
+                ctp.change_type
             )
             for df_ref in datafile_refs:
                 # if the context file is bound with the change type in
