@@ -117,7 +117,8 @@ def compare_object_ctx_identifier(x: Any, y: Any):
 
     if two objects with no identity properties are compared, deepdiff will still
     try to figure out if they might be the same object based on a critical number
-    of unique properties.
+    of unique properties. this situation is signaled back by raising the CannotCompare
+    exception
     """
     x_id = x.get("__identifier")
     y_id = y.get("__identifier")
@@ -127,8 +128,6 @@ def compare_object_ctx_identifier(x: Any, y: Any):
     if x_id or y_id:
         # if only one of them has an identifier, they must be different objects
         return False
-    # raising this exception is a signal to deepdiff to heuristically determine
-    # if two objects are the same
     raise CannotCompare() from None
 
 
@@ -136,15 +135,15 @@ def create_bundle_file_change(
     path: str,
     schema: Optional[str],
     file_type: BundleFileType,
-    old: Optional[dict[str, Any]],
-    new: Optional[dict[str, Any]],
+    old_file_content: Any,
+    new_file_content: Any,
 ) -> BundleFileChange:
     fileref = FileRef(path=path, schema=schema, file_type=file_type)
     diffs: list[Diff] = []
-    if old and new:
+    if old_file_content and new_file_content:
         deep_diff = DeepDiff(
-            old,
-            new,
+            old_file_content,
+            new_file_content,
             ignore_order=True,
             iterable_compare_func=compare_object_ctx_identifier,
         )
@@ -213,7 +212,9 @@ def create_bundle_file_change(
                 for path, change in deep_diff.get("iterable_item_removed", {}).items()
             ]
         )
-    return BundleFileChange(fileref=fileref, old=old, new=new, diffs=diffs)
+    return BundleFileChange(
+        fileref=fileref, old=old_file_content, new=new_file_content, diffs=diffs
+    )
 
 
 class Approver(Protocol):
@@ -256,6 +257,15 @@ DEEP_DIFF_RE = re.compile(r"\['?(.*?)'?\]")
 
 
 def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
+    """
+    deepdiff's way to describe a path within a data structure differs from jsonpath.
+    this function helps to translate deepdiff paths into regular jsonpath expressions.
+
+    deepdiff paths start with "root" followed by a series of square bracket expressions
+    fields and indices, e.g. `root['openshiftResources'][1]['version']`. the matching
+    jsonpath expression looks like `openshiftResources.[1].version`
+    """
+
     def build_jsonpath_part(element: str) -> jsonpath_ng.JSONPath:
         if element.isdigit():
             return jsonpath_ng.Index(int(element))
@@ -270,6 +280,12 @@ def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
 
 @dataclass
 class ChangeTypeProcessor:
+    """
+    The datasclass ChangeTypeProcessor wraps the generated GQL class ChangeType
+    and adds functionality that operates close on the configuration of the
+    ChangeType.
+    """
+
     change_type: ChangeType
 
     def __post_init__(self):
@@ -294,6 +310,11 @@ class ChangeTypeProcessor:
         self.expressions_by_file_type_schema = expressions_by_file_type_schema
 
     def allowed_changed_paths(self, file_ref: FileRef, file_content: Any) -> list[str]:
+        """
+        find all paths within the provide file_content, that are covered by this
+        ChangeType. the paths are represented as jsonpath expressions pinpointing
+        the root element that can be changed
+        """
         paths = []
         if (
             file_ref.file_type,
@@ -313,8 +334,16 @@ class ChangeTypeProcessor:
 
 @dataclass
 class ChangeTypeContext:
+    """
+    A ChangeTypeContext represents a ChangeType in the context of its usage, e.g.
+    bound to a RoleV1. The relevant part is not the role though, but the approvers
+    defined in that context.
+
+    ChangeTypeContext serves as a way to reason about changes outside within an
+    arbitrary context, as long as it has a way to provide approvers.
+    """
+
     change_type_processor: ChangeTypeProcessor
-    context_type: str
     context: str
     approvers: list[Approver]
 
@@ -340,8 +369,8 @@ def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
             path=c.get("datafilepath"),
             schema=c.get("datafileschema"),
             file_type=BundleFileType.DATAFILE,
-            old=c.get("old"),
-            new=c.get("new"),
+            old_file_content=c.get("old"),
+            new_file_content=c.get("new"),
         )
         for c in bundle_changes["datafiles"].values()
     ]
@@ -351,8 +380,8 @@ def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
                 path=c.get("resourcepath"),
                 schema=None,  # todo(goberlec): schema for res file?
                 file_type=BundleFileType.RESOURCEFILE,
-                old=c.get("old"),
-                new=c.get("new"),
+                old_file_content=c.get("old"),
+                new_file_content=c.get("new"),
             )
             for c in bundle_changes["resources"].values()
         ]
@@ -360,18 +389,19 @@ def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
     return change_list
 
 
-def build_change_type_contexts_from_self_service_roles(
+def cover_changes_with_self_service_roles(
     roles: list[RoleV1],
     change_types: list[ChangeType],
     bundle_changes: list[BundleFileChange],
     saas_file_owner_change_type_name: Optional[str] = None,
-) -> dict[FileRef, list[ChangeTypeContext]]:
+) -> None:
     # wrap changetypes
     change_type_processors = [ChangeTypeProcessor(ct) for ct in change_types]
 
-    # role lookup enables fast lookup for (filetype, filepath, changetype-name)
+    # role lookup enables fast lookup for (filetype, filepath, changetype-name) to a role
     role_lookup: dict[Tuple[BundleFileType, str, str], list[RoleV1]] = defaultdict(list)
     for r in roles:
+        # build role lookup for owned_saas_files section of a role
         if saas_file_owner_change_type_name and r.owned_saas_files:
             for saas_file in r.owned_saas_files:
                 if saas_file:
@@ -383,6 +413,7 @@ def build_change_type_contexts_from_self_service_roles(
                         )
                     ].append(r)
 
+        # build role lookup for self_service section of a role
         if r.self_service:
             for ss in r.self_service:
                 if ss and ss.datafiles:
@@ -398,46 +429,24 @@ def build_change_type_contexts_from_self_service_roles(
                                 (BundleFileType.RESOURCEFILE, res, ss.change_type.name)
                             ].append(r)
 
-    change_type_contexts: dict[FileRef, list[ChangeTypeContext]] = defaultdict(list)
     for bc in bundle_changes:
         for ctp in change_type_processors:
-            context_files = extract_datafile_context_from_bundle_change(
+            datafile_refs = extract_datafile_context_from_bundle_change(
                 bc, ctp.change_type
             )
-            for cf in context_files:
+            for df_ref in datafile_refs:
                 # if the context file is bound with the change type in
                 # a role, build a changetypecontext
-                for role in role_lookup[(cf.file_type, cf.path, ctp.change_type.name)]:
-                    change_type_contexts[bc.fileref].append(
+                for role in role_lookup[
+                    (df_ref.file_type, df_ref.path, ctp.change_type.name)
+                ]:
+                    bc.cover_changes(
                         ChangeTypeContext(
                             change_type_processor=ctp,
-                            context_type="RoleV1",
-                            context=role.name,
+                            context=f"RoleV1 - {role.name}",
                             approvers=[u for u in role.users or [] if u],
                         )
                     )
-
-    return change_type_contexts
-
-
-def build_change_type_contexts(
-    changes: list[BundleFileChange],
-    change_types: list[ChangeType],
-    comparision_gql_api: gql.GqlApi,
-    saas_file_owner_change_type_name: Optional[str] = None,
-):
-    roles = fetch_self_service_roles(comparision_gql_api)
-    contexts = build_change_type_contexts_from_self_service_roles(
-        bundle_changes=changes,
-        change_types=change_types,
-        roles=roles,
-        saas_file_owner_change_type_name=saas_file_owner_change_type_name,
-    )
-
-    # add more contexts from other places, e.g.
-    # - build_change_type_contexts_for_user_file_self_service()
-    #  ...
-    return contexts
 
 
 def cover_changes(
@@ -446,13 +455,14 @@ def cover_changes(
     comparision_gql_api: gql.GqlApi,
     saas_file_owner_change_type_name: Optional[str] = None,
 ):
-    contexts = build_change_type_contexts(
-        changes, change_types, comparision_gql_api, saas_file_owner_change_type_name
+    # self service roles coverage
+    roles = fetch_self_service_roles(comparision_gql_api)
+    cover_changes_with_self_service_roles(
+        bundle_changes=changes,
+        change_types=change_types,
+        roles=roles,
+        saas_file_owner_change_type_name=saas_file_owner_change_type_name,
     )
-    for c in changes:
-        if c.fileref in contexts:
-            for ctx in contexts[c.fileref]:
-                c.cover_changes(ctx)
 
 
 def run(
@@ -486,7 +496,7 @@ def run(
                         "change type": d.covered_by[
                             0
                         ].change_type_processor.change_type.name,
-                        "context": f"{d.covered_by[0].context_type} - {d.covered_by[0].context}",
+                        "context": d.covered_by[0].context,
                         "approvers": ", ".join(
                             [a.org_username for a in d.covered_by[0].approvers]
                         )[:20],
@@ -530,5 +540,4 @@ def print_table(content, columns, table_format="simple"):
 # todo
 # write docs
 # write PR comment
-# rething changetype context structure - make move the cover function to the bundle change??
 # dedup code in create_bundle_file_change
