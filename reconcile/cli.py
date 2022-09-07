@@ -2094,11 +2094,20 @@ def integrations_manager(
     "--comparison-sha",
     help="bundle sha to compare to to find changes",
 )
+@click.option(
+    "--saas-file-owner-change-type-name",
+    help="bundle sha to compare to to find changes",
+)
 @click.pass_context
-def change_owners(ctx, comparison_sha):
+def change_owners(ctx, comparison_sha, saas_file_owner_change_type_name):
     import reconcile.change_owners
 
-    run_integration(reconcile.change_owners, ctx.obj, comparison_sha)
+    run_integration(
+        reconcile.change_owners,
+        ctx.obj,
+        comparison_sha,
+        saas_file_owner_change_type_name,
+    )
 
 
 def get_integration_cli_meta() -> dict[str, IntegrationMeta]:

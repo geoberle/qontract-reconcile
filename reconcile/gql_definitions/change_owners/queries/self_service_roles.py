@@ -31,6 +31,9 @@ query SelfServiceRolesQuery {
       }
       resources
     }
+    owned_saas_files {
+      path
+    }
     users {
       org_username
     }
@@ -68,6 +71,14 @@ class SelfServiceConfigV1(BaseModel):
         extra = Extra.forbid
 
 
+class SaasFileV2(BaseModel):
+    path: str = Field(..., alias="path")
+
+    class Config:
+        smart_union = True
+        extra = Extra.forbid
+
+
 class UserV1(BaseModel):
     org_username: str = Field(..., alias="org_username")
 
@@ -81,6 +92,9 @@ class RoleV1(BaseModel):
     path: str = Field(..., alias="path")
     self_service: Optional[list[Optional[SelfServiceConfigV1]]] = Field(
         ..., alias="self_service"
+    )
+    owned_saas_files: Optional[list[Optional[SaasFileV2]]] = Field(
+        ..., alias="owned_saas_files"
     )
     users: Optional[list[Optional[UserV1]]] = Field(..., alias="users")
 

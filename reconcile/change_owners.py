@@ -274,7 +274,7 @@ class ChangeTypeProcessor:
 
     def __post_init__(self):
         expressions_by_file_type_schema: dict[
-            (str, Optional[str]), list[jsonpath_ng.JSONPath]
+            Tuple[BundleFileType, Optional[str]], list[jsonpath_ng.JSONPath]
         ] = defaultdict(list)
         for c in self.change_type.changes or []:
             if isinstance(c, ChangeTypeChangeDetectorJsonPathProviderV1):
@@ -321,7 +321,7 @@ class ChangeTypeContext:
 
 def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
     roles = self_service_roles.query(gql_api.query).roles or []
-    return [r for r in roles if r and r.self_service]
+    return [r for r in roles if r and (r.self_service or r.owned_saas_files)]
 
 
 def fetch_change_types(gql_api: gql.GqlApi) -> list[ChangeType]:
@@ -364,6 +364,7 @@ def build_change_type_contexts_from_self_service_roles(
     roles: list[RoleV1],
     change_types: list[ChangeType],
     bundle_changes: list[BundleFileChange],
+    saas_file_owner_change_type_name: Optional[str] = None,
 ) -> dict[FileRef, list[ChangeTypeContext]]:
     # wrap changetypes
     change_type_processors = [ChangeTypeProcessor(ct) for ct in change_types]
@@ -371,21 +372,31 @@ def build_change_type_contexts_from_self_service_roles(
     # role lookup enables fast lookup for (filetype, filepath, changetype-name)
     role_lookup: dict[Tuple[BundleFileType, str, str], list[RoleV1]] = defaultdict(list)
     for r in roles:
-        if not r.self_service:
-            continue
-        for ss in r.self_service:
-            if ss and ss.datafiles:
-                for df in ss.datafiles:
-                    if df:
-                        role_lookup[
-                            (BundleFileType.DATAFILE, df.path, ss.change_type.name)
-                        ].append(r)
-            if ss and ss.resources:
-                for res in ss.resources:
-                    if res:
-                        role_lookup[
-                            (BundleFileType.RESOURCEFILE, res, ss.change_type.name)
-                        ].append(r)
+        if saas_file_owner_change_type_name and r.owned_saas_files:
+            for saas_file in r.owned_saas_files:
+                if saas_file:
+                    role_lookup[
+                        (
+                            BundleFileType.DATAFILE,
+                            saas_file.path,
+                            saas_file_owner_change_type_name,
+                        )
+                    ].append(r)
+
+        if r.self_service:
+            for ss in r.self_service:
+                if ss and ss.datafiles:
+                    for df in ss.datafiles:
+                        if df:
+                            role_lookup[
+                                (BundleFileType.DATAFILE, df.path, ss.change_type.name)
+                            ].append(r)
+                if ss and ss.resources:
+                    for res in ss.resources:
+                        if res:
+                            role_lookup[
+                                (BundleFileType.RESOURCEFILE, res, ss.change_type.name)
+                            ].append(r)
 
     change_type_contexts: dict[FileRef, list[ChangeTypeContext]] = defaultdict(list)
     for bc in bundle_changes:
@@ -413,12 +424,16 @@ def build_change_type_contexts(
     changes: list[BundleFileChange],
     change_types: list[ChangeType],
     comparision_gql_api: gql.GqlApi,
+    saas_file_owner_change_type_name: Optional[str] = None,
 ):
+    roles = fetch_self_service_roles(comparision_gql_api)
     contexts = build_change_type_contexts_from_self_service_roles(
         bundle_changes=changes,
         change_types=change_types,
-        roles=fetch_self_service_roles(comparision_gql_api),
+        roles=roles,
+        saas_file_owner_change_type_name=saas_file_owner_change_type_name,
     )
+
     # add more contexts from other places, e.g.
     # - build_change_type_contexts_for_user_file_self_service()
     #  ...
@@ -429,22 +444,31 @@ def cover_changes(
     changes: list[BundleFileChange],
     change_types: list[ChangeType],
     comparision_gql_api: gql.GqlApi,
+    saas_file_owner_change_type_name: Optional[str] = None,
 ):
-    contexts = build_change_type_contexts(changes, change_types, comparision_gql_api)
+    contexts = build_change_type_contexts(
+        changes, change_types, comparision_gql_api, saas_file_owner_change_type_name
+    )
     for c in changes:
         if c.fileref in contexts:
             for ctx in contexts[c.fileref]:
                 c.cover_changes(ctx)
 
 
-def run(dry_run: bool, comparison_sha: str):
+def run(
+    dry_run: bool,
+    comparison_sha: str,
+    saas_file_owner_change_type_name: Optional[str] = None,
+):
     comparision_gql_api = gql.get_api_for_sha(
-        comparison_sha, QONTRACT_INTEGRATION, validate_schemas=True
+        comparison_sha, QONTRACT_INTEGRATION, validate_schemas=False
     )
 
     changes = find_bundle_changes(comparison_sha)
     change_types = fetch_change_types(comparision_gql_api)
-    cover_changes(changes, change_types, comparision_gql_api)
+    cover_changes(
+        changes, change_types, comparision_gql_api, saas_file_owner_change_type_name
+    )
 
     results = []
     for c in changes:
