@@ -1,5 +1,6 @@
-datafilepath: "/test-namespace.yaml"
-datafileschema: "/openshift/namespace-1.yml"
+filepath: "/test-namespace.yaml"
+fileschema: "/openshift/namespace-1.yml"
+filetype: datafile
 content:
   name: test-namespace
   openshiftResources:

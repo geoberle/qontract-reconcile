@@ -1,5 +1,6 @@
-datafilepath: "/team/user.yml"
-datafileschema: "/access/user-1.yml"
+filepath: "/team/user.yml"
+fileschema: "/access/user-1.yml"
+filetype: datafile
 content:
   $schema: /access/user-1.yml
 

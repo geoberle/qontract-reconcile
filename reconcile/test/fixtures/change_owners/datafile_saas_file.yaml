@@ -1,5 +1,6 @@
-datafilepath: "/services/github-mirror/cicd/deploy.yaml"
-datafileschema: "/app-sre/saas-file-2.yml"
+filepath: "/services/github-mirror/cicd/deploy.yaml"
+fileschema: "/app-sre/saas-file-2.yml"
+filetype: datafile
 content:
   "$schema": "/app-sre/saas-file-2.yml"
   labels:

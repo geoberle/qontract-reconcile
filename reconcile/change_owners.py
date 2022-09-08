@@ -23,6 +23,7 @@ from deepdiff.helper import CannotCompare
 import jsonpath_ng
 import jsonpath_ng.ext
 from tabulate import tabulate
+import anymarkup
 
 
 QONTRACT_INTEGRATION = "change-owners"
@@ -270,6 +271,12 @@ def create_bundle_file_change(
     library is used.
     """
     fileref = FileRef(path=path, schema=schema, file_type=file_type)
+
+    # try to parse the content if a resourcefile has a schema
+    if file_type == BundleFileType.RESOURCEFILE and schema:
+        old_file_content = anymarkup.parse(old_file_content, force_types=None)
+        new_file_content = anymarkup.parse(new_file_content, force_types=None)
+
     diffs: list[Diff] = []
     if old_file_content and new_file_content:
         deep_diff = DeepDiff(
@@ -282,7 +289,7 @@ def create_bundle_file_change(
         diffs.extend(
             [
                 Diff(
-                    path=deep_diff_path_to_jsonpath(path),
+                    path=deepdiff_path_to_jsonpath(path),
                     diff_type=DiffType.CHANGED,
                     old=change.get("old_value"),
                     new=change.get("new_value"),
@@ -295,7 +302,7 @@ def create_bundle_file_change(
         diffs.extend(
             [
                 Diff(
-                    path=deep_diff_path_to_jsonpath(path),
+                    path=deepdiff_path_to_jsonpath(path),
                     diff_type=DiffType.ADDED,
                     old=None,
                     new=None,  # TODO(goberlec) get access to new
@@ -308,7 +315,7 @@ def create_bundle_file_change(
         diffs.extend(
             [
                 Diff(
-                    path=deep_diff_path_to_jsonpath(path),
+                    path=deepdiff_path_to_jsonpath(path),
                     diff_type=DiffType.REMOVED,
                     old=None,  # TODO(goberlec) get access to new
                     new=None,
@@ -321,7 +328,7 @@ def create_bundle_file_change(
         diffs.extend(
             [
                 Diff(
-                    path=deep_diff_path_to_jsonpath(path),
+                    path=deepdiff_path_to_jsonpath(path),
                     diff_type=DiffType.ADDED,
                     old=None,
                     new=change,
@@ -334,7 +341,7 @@ def create_bundle_file_change(
         diffs.extend(
             [
                 Diff(
-                    path=deep_diff_path_to_jsonpath(path),
+                    path=deepdiff_path_to_jsonpath(path),
                     diff_type=DiffType.REMOVED,
                     old=change,
                     new=None,
@@ -354,7 +361,7 @@ def create_bundle_file_change(
 DEEP_DIFF_RE = re.compile(r"\['?(.*?)'?\]")
 
 
-def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
+def deepdiff_path_to_jsonpath(deep_diff_path: str) -> str:
     """
     deepdiff's way to describe a path within a data structure differs from jsonpath.
     This function translates deepdiff paths into regular jsonpath expressions.
@@ -363,6 +370,8 @@ def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
     fields and indices, e.g. `root['openshiftResources'][1]['version']`. The matching
     jsonpath expression is `openshiftResources.[1].version`
     """
+    if not deep_diff_path.startswith("root"):
+        raise ValueError("a deepdiff path must start with 'root'")
 
     def build_jsonpath_part(element: str) -> jsonpath_ng.JSONPath:
         if element.isdigit():
@@ -373,7 +382,10 @@ def deep_diff_path_to_jsonpath(deep_diff_path: str) -> str:
     path_parts = [
         build_jsonpath_part(p) for p in DEEP_DIFF_RE.findall(deep_diff_path[4:])
     ]
-    return reduce(lambda a, b: a.child(b), path_parts)
+    if path_parts:
+        return reduce(lambda a, b: a.child(b), path_parts)
+    else:
+        return jsonpath_ng.Root()
 
 
 @dataclass
@@ -593,10 +605,10 @@ def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
         [
             create_bundle_file_change(
                 path=c.get("resourcepath"),
-                schema=None,  # todo(goberlec): schema for res file?
+                schema=c.get("new", {}).get("$schema", c.get("old", {}).get("$schema")),
                 file_type=BundleFileType.RESOURCEFILE,
-                old_file_content=c.get("old"),
-                new_file_content=c.get("new"),
+                old_file_content=c.get("old", {}).get("content"),
+                new_file_content=c.get("new", {}).get("content"),
             )
             for c in bundle_changes["resources"].values()
         ]
