@@ -7,12 +7,15 @@ from reconcile.change_owners import (
     Diff,
     DiffType,
     FileRef,
-    build_change_type_process,
+    build_change_type_processor,
     create_bundle_file_change,
     cover_changes_with_self_service_roles,
     deepdiff_path_to_jsonpath,
 )
-from reconcile.gql_definitions.change_owners.queries.change_types import ChangeTypeV1
+from reconcile.gql_definitions.change_owners.queries.change_types import (
+    ChangeTypeChangeDetectorV1,
+    ChangeTypeV1,
+)
 from reconcile.gql_definitions.change_owners.queries import self_service_roles
 from reconcile.gql_definitions.change_owners.queries.self_service_roles import (
     DatafileObjectV1,
@@ -27,6 +30,7 @@ import pytest
 import copy
 import jsonpath_ng
 import jsonpath_ng.ext
+from jsonpath_ng.exceptions import JsonPathParserError
 
 fxt = Fixtures("change_owners")
 
@@ -283,6 +287,31 @@ def test_deepdiff_invalid():
 
 
 #
+# change type processor validations
+#
+
+
+def test_change_type_processor_building_unsupported_provider(
+    secret_promoter_change_type: ChangeTypeV1,
+):
+    secret_promoter_change_type.changes[0] = ChangeTypeChangeDetectorV1(  # type: ignore
+        provider="unsupported-provider", changeSchema=None, context=None
+    )
+    with pytest.raises(ValueError):
+        build_change_type_processor(secret_promoter_change_type)
+
+
+def test_change_type_processor_building_invalid_jsonpaths(
+    secret_promoter_change_type: ChangeTypeV1,
+):
+    secret_promoter_change_type.changes[0].json_path_selectors[  # type: ignore
+        0
+    ] = "invalid-jsonpath/selector"
+    with pytest.raises(JsonPathParserError):
+        build_change_type_processor(secret_promoter_change_type)
+
+
+#
 # change type processor find allowed changed paths
 #
 
@@ -293,7 +322,7 @@ def test_change_type_processor_allowed_paths_simple(
     changed_user_file = user_file.create_bundle_change(
         {"roles[0]": {"$ref": "some-role"}}
     )
-    processor = build_change_type_process(role_member_change_type)
+    processor = build_change_type_processor(role_member_change_type)
     paths = processor.allowed_changed_paths(
         changed_user_file.fileref, changed_user_file.new
     )
@@ -307,7 +336,7 @@ def test_change_type_processor_allowed_paths_conditions(
     changed_namespace_file = namespace_file.create_bundle_change(
         {"openshiftResources[1].version": 2}
     )
-    processor = build_change_type_process(secret_promoter_change_type)
+    processor = build_change_type_processor(secret_promoter_change_type)
     paths = processor.allowed_changed_paths(
         changed_namespace_file.fileref, changed_namespace_file.new
     )
@@ -767,7 +796,7 @@ def test_cover_changes_one_file(
         {"resourceTemplates[0].targets[0].ref": "new-ref"}
     )
     ctx = ChangeTypeContext(
-        change_type_processor=build_change_type_process(saas_file_changetype),
+        change_type_processor=build_change_type_processor(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -781,7 +810,7 @@ def test_uncovered_change_one_file(
 ):
     saas_file_change = saas_file.create_bundle_change({"name": "new-name"})
     ctx = ChangeTypeContext(
-        change_type_processor=build_change_type_process(saas_file_changetype),
+        change_type_processor=build_change_type_processor(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -802,7 +831,7 @@ def test_partially_covered_change_one_file(
         d for d in saas_file_change.diffs if str(d.path) == ref_update_path
     )
     ctx = ChangeTypeContext(
-        change_type_processor=build_change_type_process(saas_file_changetype),
+        change_type_processor=build_change_type_processor(saas_file_changetype),
         context="RoleV1 - some-role",
         approvers=[UserV1(org_username="user")],
     )
@@ -856,8 +885,8 @@ def test_change_coverage(
     cover_changes_with_self_service_roles(
         roles=[role_approval_role, secret_promoter_role],
         change_type_processors=[
-            build_change_type_process(role_member_change_type),
-            build_change_type_process(secret_promoter_change_type),
+            build_change_type_processor(role_member_change_type),
+            build_change_type_processor(secret_promoter_change_type),
         ],
         bundle_changes=bundle_changes,
     )

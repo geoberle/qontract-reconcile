@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, Protocol, Tuple
 from functools import reduce
+import logging
+import traceback
 import re
 
 from reconcile.utils import gql
@@ -424,7 +426,7 @@ class ChangeTypeProcessor:
         return paths
 
 
-def build_change_type_process(change_type: ChangeTypeV1) -> ChangeTypeProcessor:
+def build_change_type_processor(change_type: ChangeTypeV1) -> ChangeTypeProcessor:
     """
     Build a ChangeTypeProcessor from a ChangeTypeV1 and pre-initializing jsonpaths.
     """
@@ -544,7 +546,7 @@ def cover_changes_with_self_service_roles(
 
 def cover_changes(
     changes: list[BundleFileChange],
-    change_types: list[ChangeTypeV1],
+    change_type_processors: list[ChangeTypeProcessor],
     comparision_gql_api: gql.GqlApi,
     saas_file_owner_change_type_name: Optional[str] = None,
 ) -> None:
@@ -552,7 +554,6 @@ def cover_changes(
     Coordinating function that can reach out to different `cover_*` functions
     leveraging different approver contexts.
     """
-    change_type_processors = [build_change_type_process(ct) for ct in change_types]
 
     # self service roles coverage
     roles = fetch_self_service_roles(comparision_gql_api)
@@ -575,9 +576,9 @@ def fetch_self_service_roles(gql_api: gql.GqlApi) -> list[RoleV1]:
     return [r for r in roles if r and (r.self_service or r.owned_saas_files)]
 
 
-def fetch_change_types(gql_api: gql.GqlApi) -> list[ChangeTypeV1]:
+def fetch_change_type_processors(gql_api: gql.GqlApi) -> list[ChangeTypeProcessor]:
     change_type_list = change_types.query(gql_api.query).change_types or []
-    return [ct for ct in change_type_list if ct]
+    return [build_change_type_processor(ct) for ct in change_type_list if ct]
 
 
 def fetch_bundle_changes(comparison_sha: str) -> list[BundleFileChange]:
@@ -591,6 +592,9 @@ def fetch_bundle_changes(comparison_sha: str) -> list[BundleFileChange]:
 
 
 def _parse_bundle_changes(bundle_changes) -> list[BundleFileChange]:
+    """
+    parses the output of the qontract-server /diff endpoint
+    """
     change_list = [
         create_bundle_file_change(
             path=c.get("datafilepath"),
@@ -625,12 +629,20 @@ def run(
     comparision_gql_api = gql.get_api_for_sha(
         comparison_sha, QONTRACT_INTEGRATION, validate_schemas=False
     )
-
     changes = fetch_bundle_changes(comparison_sha)
-    change_types = fetch_change_types(comparision_gql_api)
-    cover_changes(
-        changes, change_types, comparision_gql_api, saas_file_owner_change_type_name
-    )
+    change_type_processors = fetch_change_type_processors(comparision_gql_api)
+
+    # an error while trying to cover changes will not fail the integration
+    # and the PR check - self service merges will not be available though
+    try:
+        cover_changes(
+            changes,
+            change_type_processors,
+            comparision_gql_api,
+            saas_file_owner_change_type_name,
+        )
+    except BaseException:
+        logging.error(traceback.format_exc())
 
     results = []
     for c in changes:
@@ -690,8 +702,5 @@ def print_table(content, columns, table_format="simple"):
 
 
 # todo
-# dry-run mode
-# handle resource files
-# extract schema from resource
 # refactor table rendering (dedup with qontract-cli)
 # write PR comment
