@@ -2,6 +2,19 @@
 
 query ChangeTypes {
   change_types: change_types_v1 {
-    ... ChangeType
+    name
+    contextType
+    contextSchema
+    changes {
+      provider
+      changeSchema
+      context {
+        selector
+        when
+      }
+      ... on ChangeTypeChangeDetectorJsonPathProvider_v1 {
+        jsonPathSelectors
+      }
+    }
   }
 }

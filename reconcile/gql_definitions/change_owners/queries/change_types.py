@@ -15,37 +15,77 @@ from pydantic import (  # noqa: F401 # pylint: disable=W0611
     Json,
 )
 
-from reconcile.gql_definitions.change_owners.fragments.change_type import ChangeType
-
 
 DEFINITION = """
-fragment ChangeType on ChangeType_v1 {
-  name
-  contextType
-  contextSchema
-  changes {
-    provider
-    changeSchema
-    context {
-      selector
-      when
-    }
-    ... on ChangeTypeChangeDetectorJsonPathProvider_v1 {
-      jsonPathSelectors
-    }
-  }
-}
-
 query ChangeTypes {
   change_types: change_types_v1 {
-    ... ChangeType
+    name
+    contextType
+    contextSchema
+    changes {
+      provider
+      changeSchema
+      context {
+        selector
+        when
+      }
+      ... on ChangeTypeChangeDetectorJsonPathProvider_v1 {
+        jsonPathSelectors
+      }
+    }
   }
 }
 """
 
 
+class ChangeTypeChangeDetectorContextSelectorV1(BaseModel):
+    selector: str = Field(..., alias="selector")
+    when: str = Field(..., alias="when")
+
+    class Config:
+        smart_union = True
+        extra = Extra.forbid
+
+
+class ChangeTypeChangeDetectorV1(BaseModel):
+    provider: str = Field(..., alias="provider")
+    change_schema: Optional[str] = Field(..., alias="changeSchema")
+    context: Optional[ChangeTypeChangeDetectorContextSelectorV1] = Field(
+        ..., alias="context"
+    )
+
+    class Config:
+        smart_union = True
+        extra = Extra.forbid
+
+
+class ChangeTypeChangeDetectorJsonPathProviderV1(ChangeTypeChangeDetectorV1):
+    json_path_selectors: Optional[list[str]] = Field(..., alias="jsonPathSelectors")
+
+    class Config:
+        smart_union = True
+        extra = Extra.forbid
+
+
+class ChangeTypeV1(BaseModel):
+    name: str = Field(..., alias="name")
+    context_type: str = Field(..., alias="contextType")
+    context_schema: Optional[str] = Field(..., alias="contextSchema")
+    changes: Optional[
+        list[
+            Union[
+                ChangeTypeChangeDetectorJsonPathProviderV1, ChangeTypeChangeDetectorV1
+            ]
+        ]
+    ] = Field(..., alias="changes")
+
+    class Config:
+        smart_union = True
+        extra = Extra.forbid
+
+
 class ChangeTypesQueryData(BaseModel):
-    change_types: Optional[list[Optional[ChangeType]]] = Field(
+    change_types: Optional[list[Optional[ChangeTypeV1]]] = Field(
         ..., alias="change_types"
     )
 

@@ -12,9 +12,9 @@ from reconcile.change_owners import (
     cover_changes_with_self_service_roles,
     deep_diff_path_to_jsonpath,
 )
-from reconcile.gql_definitions.change_owners.fragments.change_type import ChangeType
+from reconcile.gql_definitions.change_owners.queries.change_types import ChangeTypeV1
+from reconcile.gql_definitions.change_owners.queries import self_service_roles
 from reconcile.gql_definitions.change_owners.queries.self_service_roles import (
-    ChangeTypeV1,
     DatafileObjectV1,
     RoleV1,
     SelfServiceConfigV1,
@@ -63,9 +63,9 @@ class TestDatafile:
         return bundle_file_change
 
 
-def load_change_type(path: str) -> ChangeType:
+def load_change_type(path: str) -> ChangeTypeV1:
     content = fxt.get_anymarkup(path)
-    return ChangeType(**content)
+    return ChangeTypeV1(**content)
 
 
 def load_self_service_roles(path: str) -> list[RoleV1]:
@@ -84,7 +84,7 @@ def build_role(
         path=f"/role/{name}.yaml",
         self_service=[
             SelfServiceConfigV1(
-                change_type=ChangeTypeV1(
+                change_type=self_service_roles.ChangeTypeV1(
                     name=change_type_name,
                 ),
                 datafiles=datafiles,
@@ -97,22 +97,22 @@ def build_role(
 
 
 @pytest.fixture
-def saas_file_changetype() -> ChangeType:
+def saas_file_changetype() -> ChangeTypeV1:
     return load_change_type("changetype_saas_file.yaml")
 
 
 @pytest.fixture
-def role_member_change_type() -> ChangeType:
+def role_member_change_type() -> ChangeTypeV1:
     return load_change_type("changetype_role_member.yaml")
 
 
 @pytest.fixture
-def secret_promoter_change_type() -> ChangeType:
+def secret_promoter_change_type() -> ChangeTypeV1:
     return load_change_type("changetype_secret_promoter.yaml")
 
 
 @pytest.fixture
-def change_types() -> list[ChangeType]:
+def change_types() -> list[ChangeTypeV1]:
     return [saas_file_changetype(), role_member_change_type()]
 
 
@@ -137,7 +137,7 @@ def namespace_file() -> TestDatafile:
 
 
 def test_extract_context_file_refs_from_bundle_change(
-    saas_file_changetype: ChangeType, saas_file: TestDatafile
+    saas_file_changetype: ChangeTypeV1, saas_file: TestDatafile
 ):
     """
     in this testcase, a changed datafile matches directly the context schema
@@ -152,7 +152,7 @@ def test_extract_context_file_refs_from_bundle_change(
 
 
 def test_extract_context_file_refs_from_bundle_change_schema_mismatch(
-    saas_file_changetype: ChangeType, saas_file: TestDatafile
+    saas_file_changetype: ChangeTypeV1, saas_file: TestDatafile
 ):
     """
     in this testcase, the schema of the bundle change and the schema of the
@@ -167,7 +167,7 @@ def test_extract_context_file_refs_from_bundle_change_schema_mismatch(
 
 
 def test_extract_context_file_refs_added_selector(
-    role_member_change_type: ChangeType,
+    role_member_change_type: ChangeTypeV1,
 ):
     """
     in this testcase, a changed datafile does not directly belong to the change
@@ -201,7 +201,7 @@ def test_extract_context_file_refs_added_selector(
 
 
 def test_extract_context_file_refs_removed_selector(
-    role_member_change_type: ChangeType,
+    role_member_change_type: ChangeTypeV1,
 ):
     """
     this testcase is similar to previous one, but detects removed contexts (e.g
@@ -233,7 +233,7 @@ def test_extract_context_file_refs_removed_selector(
 
 
 def test_extract_context_file_refs_selector_change_schema_mismatch(
-    role_member_change_type: ChangeType,
+    role_member_change_type: ChangeTypeV1,
 ):
     """
     in this testcase, the changeSchema section of the change types changes does
@@ -249,10 +249,6 @@ def test_extract_context_file_refs_selector_change_schema_mismatch(
     assert datafile_change
     file_refs = datafile_change.extract_context_file_refs(role_member_change_type)
     assert not file_refs
-
-
-def test_with_a_context_selector_where_the_datafile_has_no_matching_section():
-    pass
 
 
 #
@@ -280,7 +276,7 @@ def test_deep_diff_path_to_jsonpath(deep_diff_path, expected_json_path):
 
 
 def test_change_type_processor_allowed_paths_simple(
-    role_member_change_type: ChangeType, user_file: TestDatafile
+    role_member_change_type: ChangeTypeV1, user_file: TestDatafile
 ):
     changed_user_file = user_file.create_bundle_change(
         {"roles[0]": {"$ref": "some-role"}}
@@ -294,7 +290,7 @@ def test_change_type_processor_allowed_paths_simple(
 
 
 def test_change_type_processor_allowed_paths_conditions(
-    secret_promoter_change_type: ChangeType, namespace_file: TestDatafile
+    secret_promoter_change_type: ChangeTypeV1, namespace_file: TestDatafile
 ):
     changed_namespace_file = namespace_file.create_bundle_change(
         {"openshiftResources[1].version": 2}
@@ -698,7 +694,7 @@ def test_bundle_change_diff_item_reorder():
 
 
 def test_cover_changes_one_file(
-    saas_file_changetype: ChangeType, saas_file: TestDatafile
+    saas_file_changetype: ChangeTypeV1, saas_file: TestDatafile
 ):
     saas_file_change = saas_file.create_bundle_change(
         {"resourceTemplates[0].targets[0].ref": "new-ref"}
@@ -714,7 +710,7 @@ def test_cover_changes_one_file(
 
 
 def test_uncovered_change_one_file(
-    saas_file_changetype: ChangeType, saas_file: TestDatafile
+    saas_file_changetype: ChangeTypeV1, saas_file: TestDatafile
 ):
     saas_file_change = saas_file.create_bundle_change({"name": "new-name"})
     ctx = ChangeTypeContext(
@@ -729,7 +725,7 @@ def test_uncovered_change_one_file(
 
 
 def test_partially_covered_change_one_file(
-    saas_file_changetype: ChangeType, saas_file: TestDatafile
+    saas_file_changetype: ChangeTypeV1, saas_file: TestDatafile
 ):
     ref_update_path = "resourceTemplates.[0].targets.[0].ref"
     saas_file_change = saas_file.create_bundle_change(
@@ -754,9 +750,9 @@ def test_partially_covered_change_one_file(
 
 
 def test_change_coverage(
-    secret_promoter_change_type: ChangeType,
+    secret_promoter_change_type: ChangeTypeV1,
     namespace_file: TestDatafile,
-    role_member_change_type: ChangeType,
+    role_member_change_type: ChangeTypeV1,
     user_file: TestDatafile,
 ):
     role_approver_user = "the-one-that-approves-roles"
