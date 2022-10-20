@@ -36,6 +36,7 @@ from reconcile.utils.mr.labels import (
     NOT_SELF_SERVICEABLE,
     HOLD,
     APPROVED,
+    SAAS_FILE_UPDATE,
 )
 
 
@@ -166,7 +167,7 @@ def write_coverage_report_to_mr(
     comments = gl.get_merge_request_comments(mr_id, include_description=True)
     # delete previous report comment
     for c in sorted(comments, key=lambda k: k["created_at"]):
-        if c["username"] == gl.user.username and c["body"].startswith(
+        if c["username"] == gl.user.username and c.get("body", "").startswith(
             change_coverage_report_header
         ):
             gl.delete_gitlab_comment(mr_id, c["id"])
@@ -284,6 +285,16 @@ def run(
     # needs a lot of improvements!
     fetch_change_type_processors(gql.get_api())
 
+    # skip processing if the MR has been opened by the app-interface bot
+    gl = init_gitlab(gitlab_project_id)
+    mr = gl.get_merge_request(gitlab_merge_request_id)
+    if mr.author.get("username") == gl.user.username:
+        logging.info(
+            f"skip processing of MR {gitlab_merge_request_id} in "
+            f"{gl.project.name} as it has been opened by {gl.user.username}"
+        )
+        return
+
     # get change types from the comparison bundle to prevent privilege escalation
     logging.info(
         f"fetching change types and permissions from comparison bundle "
@@ -317,7 +328,6 @@ def run(
         #   D E C I S I O N S
         #
 
-        gl = init_gitlab(gitlab_project_id)
         approver_decisions = get_approver_decisions_from_mr_comments(
             gl.get_merge_request_comments(
                 gitlab_merge_request_id, include_description=True
@@ -373,6 +383,18 @@ def run(
             true_label=APPROVED,
             dry_run=not mr_management_enabled,
         )
+
+        # if only saas-files are updated, add the saas-file-update label
+        saas_file_changes_only = all(
+            c.fileref.schema == "/app-sre/saas-file-2.yml" for c in changes
+        )
+        labels = manage_conditional_label(
+            labels=labels,
+            condition=saas_file_changes_only,
+            true_label=SAAS_FILE_UPDATE,
+            dry_run=not mr_management_enabled,
+        )
+
         gl.set_labels_on_merge_request(gitlab_merge_request_id, labels)
 
     except BaseException:
