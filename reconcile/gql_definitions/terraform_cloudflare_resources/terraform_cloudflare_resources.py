@@ -30,9 +30,9 @@ query TerraformCloudflareResources {
         }
         resources {
           provider
+          identifier
           ... on NamespaceTerraformResourceCloudflareWorkerScript_v1
           {
-            identifier
             name
             content_from_github {
               repo
@@ -46,7 +46,6 @@ query TerraformCloudflareResources {
           }
           ... on NamespaceTerraformResourceCloudflareZone_v1
           {
-            identifier
             zone
             plan
             type
@@ -102,6 +101,7 @@ class CloudflareAccountV1(BaseModel):
 
 class NamespaceTerraformResourceCloudflareV1(BaseModel):
     provider: str = Field(..., alias="provider")
+    identifier: str = Field(..., alias="identifier")
 
     class Config:
         smart_union = True
@@ -130,7 +130,6 @@ class CloudflareZoneWorkerScriptVarsV1(BaseModel):
 class NamespaceTerraformResourceCloudflareWorkerScriptV1(
     NamespaceTerraformResourceCloudflareV1
 ):
-    identifier: str = Field(..., alias="identifier")
     name: str = Field(..., alias="name")
     content_from_github: Optional[
         CloudflareZoneWorkerScriptContentFromGithubV1
@@ -191,7 +190,6 @@ class CloudflareZoneCertificateV1(BaseModel):
 class NamespaceTerraformResourceCloudflareZoneV1(
     NamespaceTerraformResourceCloudflareV1
 ):
-    identifier: str = Field(..., alias="identifier")
     zone: str = Field(..., alias="zone")
     plan: Optional[str] = Field(..., alias="plan")
     q_type: Optional[str] = Field(..., alias="type")

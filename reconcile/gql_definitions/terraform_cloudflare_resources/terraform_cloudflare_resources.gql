@@ -11,9 +11,9 @@ query TerraformCloudflareResources {
         }
         resources {
           provider
+          identifier
           ... on NamespaceTerraformResourceCloudflareWorkerScript_v1
           {
-            identifier
             name
             content_from_github {
               repo
@@ -27,7 +27,6 @@ query TerraformCloudflareResources {
           }
           ... on NamespaceTerraformResourceCloudflareZone_v1
           {
-            identifier
             zone
             plan
             type
