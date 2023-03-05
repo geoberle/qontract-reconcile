@@ -827,7 +827,6 @@ class TestConfigHashPromotionsValidation(TestCase):
             gitlab=None,
             integration="",
             integration_version="",
-            accounts={"name": "test-account"},  # Initiates State in SaasHerder
             settings={"hashLength": 24},
         )
 
@@ -962,7 +961,6 @@ class TestConfigHashTrigger(TestCase):
             gitlab=None,
             integration="",
             integration_version="",
-            accounts={"name": "test-account"},  # Initiates State in SaasHerder
             settings={"hashLength": 24},
         )
 

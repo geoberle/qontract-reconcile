@@ -153,7 +153,7 @@ class TestOpenshiftNamespaceLabels(TestCase):
         self.oc_map.clusters.side_effect = self._oc_map_clusters
         self.oc_map.get.side_effect = self._oc_map_get
 
-        self.state_patcher = patch(f"{module}.State")
+        self.state_patcher = patch(f"{module}.init_state")
         self.state = self.state_patcher.start().return_value
         self.state.ls.side_effect = self._state_ls
         self.state.get.side_effect = self._state_get
