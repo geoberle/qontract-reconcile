@@ -9,10 +9,15 @@ from typing import (
     Optional,
 )
 
+from boto3 import Session
 from botocore.errorfactory import ClientError
 from jinja2 import Template
 from mypy_boto3_s3 import S3Client
 
+from reconcile.gql_definitions.common.state import (
+    AppInterfaceStateConfigurationS3V1,
+    AppInterfaceStateConfigurationV1,
+)
 from reconcile.typed_queries.app_interface_vault_settings import (
     get_app_interface_vault_settings,
 )
@@ -47,12 +52,20 @@ STATE_ACCOUNT_QUERY = """
 
 def init_state(
     integration: str,
+    state_settings: Optional[AppInterfaceStateConfigurationV1] = None,
     secret_reader: Optional[SecretReaderBase] = None,
 ) -> "State":
     if not secret_reader:
         vault_settings = get_app_interface_vault_settings()
         secret_reader = create_secret_reader(use_vault=vault_settings.vault)
 
+    # see if there are state settings in the app-interface-settings file
+    # state_settings = get_app_interface_state_settings()
+    if state_settings:
+        if isinstance(state_settings, AppInterfaceStateConfigurationS3V1):
+            return init_state_from_settings(integration, secret_reader, state_settings)
+
+    # if not fall back to use the env vars + accounts stored in app-interface
     state_bucket_name = os.environ["APP_INTERFACE_STATE_BUCKET"]
     state_bucket_account_name = os.environ["APP_INTERFACE_STATE_BUCKET_ACCOUNT"]
     query = Template(STATE_ACCOUNT_QUERY).render(name=state_bucket_account_name)
@@ -63,6 +76,24 @@ def init_state(
         bucket_name=state_bucket_name,
         account_name=state_bucket_account_name,
         accounts=aws_accounts,
+    )
+
+
+def init_state_from_settings(
+    integration: str,
+    secret_reader: SecretReaderBase,
+    settings: AppInterfaceStateConfigurationS3V1,
+) -> "State":
+    secret = secret_reader.read_all_secret(settings.credentials)
+    session = Session(
+        aws_access_key_id=secret["aws_access_key_id"],
+        aws_secret_access_key=secret["aws_secret_access_key"],
+        region_name=settings.region,
+    )
+    return State(
+        integration=integration,
+        bucket=settings.bucket,
+        client=session.client("s3"),
     )
 
 
