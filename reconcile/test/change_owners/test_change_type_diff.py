@@ -59,6 +59,8 @@ def test_bundle_change_diff_value_changed():
         file_type=BundleFileType.DATAFILE,
         old_file_content={"field": "old_value"},
         new_file_content={"field": "new_value"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -79,6 +81,8 @@ def test_bundle_change_diff_value_changed_deep():
         file_type=BundleFileType.DATAFILE,
         old_file_content={"parent": {"children": [{"age": 1}]}},
         new_file_content={"parent": {"children": [{"age": 2}]}},
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -152,6 +156,8 @@ def test_bundle_change_diff_value_changed_multiple_in_iterable():
                 },
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -219,6 +225,8 @@ def test_bundle_change_diff_property_added():
                 },
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -268,6 +276,8 @@ def test_bundle_change_diff_property_removed():
                 },
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -318,6 +328,8 @@ def test_bundle_change_diff_item_added():
                 },
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -373,6 +385,8 @@ def test_bundle_change_diff_item_removed():
                 },
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -416,6 +430,8 @@ def test_bundle_change_diff_item_replaced():
                 {"$ref": "another_item"},
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert bundle_change
 
@@ -460,6 +476,8 @@ def test_bundle_change_diff_ref_item_multiple_consecutive_replaced():
                 {"$ref": "6"},
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -517,6 +535,8 @@ def test_bundle_change_diff_ref_item_multiple_replaced():
                 {"$ref": "7"},
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -566,6 +586,8 @@ def test_bundle_change_diff_item_reorder():
                 {"$ref": "reorder_item"},
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert not bundle_change
@@ -578,6 +600,8 @@ def test_bundle_change_diff_resourcefile_without_schema_unparsable():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content="something_old",
         new_file_content="something_new",
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -595,6 +619,8 @@ def test_bundle_change_diff_resourcefile_without_schema_parsable():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content="field: old_value",
         new_file_content="field: new_value",
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -618,6 +644,8 @@ def test_bundle_change_diff_resourcefile_with_schema():
         new_file_content="""
         field: new_value
         """,
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -635,6 +663,8 @@ def test_bundle_change_diff_resourcefile_with_schema_unparsable():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content="somethingsomething",
         new_file_content="somethingsomething_different",
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -652,6 +682,8 @@ def test_bundle_change_resource_file_added():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content=None,
         new_file_content="new content",
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -669,6 +701,8 @@ def test_bundle_change_resource_file_removed():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content="old content",
         new_file_content=None,
+        old_content_sha="old",
+        new_content_sha="",
     )
 
     assert bundle_change
@@ -686,6 +720,8 @@ def test_bundle_change_resource_file_dict_value_added():
         file_type=BundleFileType.RESOURCEFILE,
         old_file_content='{"field": {}}',
         new_file_content='{"field": {"new_field": "new_value"}}',
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -706,6 +742,8 @@ def test_only_checksum_changed():
         file_type=BundleFileType.DATAFILE,
         old_file_content={"field": "value", SHA256SUM_FIELD_NAME: "old_checksum"},
         new_file_content={"field": "value", SHA256SUM_FIELD_NAME: "new_checksum"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -726,6 +764,8 @@ def test_checksum_and_content_changed():
         file_type=BundleFileType.DATAFILE,
         old_file_content={"field": "value1", SHA256SUM_FIELD_NAME: "old_checksum"},
         new_file_content={"field": "value2", SHA256SUM_FIELD_NAME: "new_checksum"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change

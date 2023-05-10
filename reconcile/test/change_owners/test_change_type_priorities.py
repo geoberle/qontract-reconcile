@@ -22,6 +22,8 @@ def test_priority_for_changes(
         fileref=None,  # type: ignore
         old=None,
         new=None,
+        old_content_sha="",
+        new_content_sha="",
         diffs=[],
     )
     c1.involved_change_types = MagicMock(  # type: ignore
@@ -31,6 +33,8 @@ def test_priority_for_changes(
         fileref=None,  # type: ignore
         old=None,
         new=None,
+        old_content_sha="",
+        new_content_sha="",
         diffs=[],
     )
     c2.involved_change_types = MagicMock(  # type: ignore
@@ -46,6 +50,8 @@ def test_priorty_for_changes_no_coverage():
             fileref=None,  # type: ignore
             old=None,
             new=None,
+            old_content_sha="",
+            new_content_sha="",
             diffs=[],
         )
     ]

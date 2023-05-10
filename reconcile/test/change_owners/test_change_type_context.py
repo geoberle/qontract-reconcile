@@ -73,6 +73,8 @@ def test_extract_context_file_refs_selector(
                 "$ref": cluster,
             },
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert namespace_change
     ctp = change_type_to_processor(cluster_owner_change_type)
@@ -110,6 +112,8 @@ def test_extract_context_file_refs_in_list_added_selector(
         new_file_content={
             "roles": [{"$ref": "/role/existing.yml"}, {"$ref": new_role}],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert user_change
     ctp = change_type_to_processor(role_member_change_type)
@@ -145,6 +149,8 @@ def test_extract_context_file_refs_in_list_removed_selector(
         new_file_content={
             "roles": [{"$ref": new_role}],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert user_change
     ctp = change_type_to_processor(role_member_change_type)
@@ -173,6 +179,8 @@ def test_extract_context_file_refs_in_list_selector_change_schema_mismatch(
         file_type=BundleFileType.DATAFILE,
         old_file_content={"field": "old-value"},
         new_file_content={"field": "new-value"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert datafile_change
     ctp = change_type_to_processor(role_member_change_type)

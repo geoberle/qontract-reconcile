@@ -33,12 +33,6 @@ from reconcile.change_owners.diff import (
 from reconcile.utils import gql
 
 
-class InvalidBundleFileMetadataError(Exception):
-    """
-    Raised when invalid or missing metadata in a bundle file is detected.
-    """
-
-
 @dataclass
 class BundleFileChange:
     """
@@ -50,41 +44,13 @@ class BundleFileChange:
     fileref: FileRef
     old: Optional[dict[str, Any]]
     new: Optional[dict[str, Any]]
+    old_content_sha: str
+    new_content_sha: str
     diffs: list[Diff]
     _diff_coverage: dict[str, DiffCoverage] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self._diff_coverage = {d.path_str(): DiffCoverage(d, []) for d in self.diffs}
-
-    def old_content_sha(self) -> str:
-        """
-        Returns the SHA256SUM of the old state of the file. The checksum is provided by the
-        qontract-server and is not calculated locally. If the file has no old content
-        (a.k.a. is currently created), this function returns an empty string. It is the responsibility
-        of the caller to check if the file is created or not, e.g. via `is_file_creation()`.
-        """
-        if self.old is None:
-            return ""
-        if SHA256SUM_FIELD_NAME not in self.old:
-            raise InvalidBundleFileMetadataError(
-                f"The detected change for {self.fileref} does not contain a {SHA256SUM_FIELD_NAME} for the previous state."
-            )
-        return self.old[SHA256SUM_FIELD_NAME]
-
-    def new_content_sha(self) -> str:
-        """
-        Returns the SHA256SUM of the new state of the file. The checksum is provided by the
-        qontract-server and is not calculated locally. If the file has no new content
-        (a.k.a. is currently deleted), this function returns an empty string. It is the responsibility
-        of the caller to check if the file is deleted or not, e.g. via `is_file_deletion()`.
-        """
-        if self.new is None:
-            return ""
-        if SHA256SUM_FIELD_NAME not in self.new:
-            raise InvalidBundleFileMetadataError(
-                f"The detected change for {self.fileref} does not contain a {SHA256SUM_FIELD_NAME} for the new state."
-            )
-        return self.new[SHA256SUM_FIELD_NAME]
 
     def is_file_deletion(self) -> bool:
         return self.old is not None and self.new is None
@@ -210,6 +176,8 @@ def create_bundle_file_change(
     file_type: BundleFileType,
     old_file_content: Any,
     new_file_content: Any,
+    old_content_sha: str,
+    new_content_sha: str,
 ) -> Optional[BundleFileChange]:
     """
     this is a factory method that creates a BundleFileChange object based
@@ -236,6 +204,8 @@ def create_bundle_file_change(
             fileref=fileref,
             old=old_file_content,
             new=new_file_content,
+            old_content_sha=old_content_sha,
+            new_content_sha=new_content_sha,
             diffs=diffs,
         )
     return None
@@ -282,11 +252,13 @@ class _MoveCandidates:
                 and deletion.fileref.path != creation.fileref.path
             ):
                 move_change = create_bundle_file_change(
-                    deletion.fileref.path,
-                    deletion.fileref.schema,
-                    deletion.fileref.file_type,
-                    deletion.old,
-                    creation.new,
+                    path=deletion.fileref.path,
+                    schema=deletion.fileref.schema,
+                    file_type=deletion.fileref.file_type,
+                    new_file_content=deletion.old,
+                    old_file_content=creation.new,
+                    old_content_sha=deletion.old_content_sha,
+                    new_content_sha=creation.new_content_sha,
                 )
                 if move_change:
                     # make mypy happy
@@ -309,9 +281,9 @@ def aggregate_file_moves(
     new_bundle_changes = []
     for c in bundle_changes:
         if c.is_file_creation():
-            move_candidates[c.new_content_sha()].creations.append(c)
+            move_candidates[c.new_content_sha].creations.append(c)
         elif c.is_file_deletion():
-            move_candidates[c.old_content_sha()].deletions.append(c)
+            move_candidates[c.old_content_sha].deletions.append(c)
         else:
             new_bundle_changes.append(c)
     move_candidate_changes = itertools.chain.from_iterable(
@@ -339,6 +311,8 @@ def _parse_bundle_changes(bundle_changes: Any) -> list[BundleFileChange]:
             file_type=BundleFileType.DATAFILE,
             old_file_content=c.get("old"),
             new_file_content=c.get("new"),
+            old_content_sha=c.get("old", {}).get(SHA256SUM_FIELD_NAME) or "",
+            new_content_sha=c.get("new", {}).get(SHA256SUM_FIELD_NAME) or "",
         )
         if bc is not None:
             change_list.append(bc)
@@ -354,6 +328,8 @@ def _parse_bundle_changes(bundle_changes: Any) -> list[BundleFileChange]:
             file_type=BundleFileType.RESOURCEFILE,
             old_file_content=c.get("old", {}).get("content"),
             new_file_content=c.get("new", {}).get("content"),
+            old_content_sha=c.get("old", {}).get("sha256sum") or "",
+            new_content_sha=c.get("new", {}).get("sha256sum") or "",
         )
         if bc is not None:
             change_list.append(bc)

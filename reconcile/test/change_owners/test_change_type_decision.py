@@ -129,6 +129,8 @@ def test_change_decision(
         schema="/my/schema.yml",
         old_file_content={"foo": "bar"},
         new_file_content={"foo": "baz"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert change and len(change.diff_coverage) == 1
     change.diff_coverage[0].coverage = [
@@ -228,6 +230,8 @@ def test_change_decision_one_change_multiple_groups(
         schema="/my/schema.yml",
         old_file_content={"foo": "bar"},
         new_file_content={"foo": "baz"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert change and len(change.diff_coverage) == 1
     change.diff_coverage[0].coverage = [
@@ -275,6 +279,8 @@ def test_change_decision_auto_approve_only_approver(saas_file_changetype: Change
         schema="/my/schema.yml",
         old_file_content={"foo": "bar"},
         new_file_content={"foo": "baz"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert change and len(change.diff_coverage) == 1
     change.diff_coverage[0].coverage = [
@@ -309,6 +315,8 @@ def test_change_decision_auto_approve_not_only_approver(
         schema="/my/schema.yml",
         old_file_content={"foo": "bar"},
         new_file_content={"foo": "baz"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert change and len(change.diff_coverage) == 1
     change.diff_coverage[0].coverage = [
@@ -344,6 +352,8 @@ def test_change_decision_auto_approve_with_approval(
         schema="/my/schema.yml",
         old_file_content={"foo": "bar"},
         new_file_content={"foo": "baz"},
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert change and len(change.diff_coverage) == 1
     change.diff_coverage[0].coverage = [

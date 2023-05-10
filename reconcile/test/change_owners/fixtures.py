@@ -72,14 +72,18 @@ class StubFile:
     def create_bundle_change(
         self, jsonpath_patches: dict[str, Any]
     ) -> BundleFileChange:
+        old_content = StubFile._prepare_content(self.content, self.filepath, {})
+        new_content = StubFile._prepare_content(
+            self.content, self.filepath, jsonpath_patches
+        )
         bundle_file_change = create_bundle_file_change(
             path=self.filepath,
             schema=self.fileschema,
             file_type=BundleFileType[self.filetype.upper()],
-            old_file_content=StubFile._prepare_content(self.content, self.filepath, {}),
-            new_file_content=StubFile._prepare_content(
-                self.content, self.filepath, jsonpath_patches
-            ),
+            old_file_content=old_content,
+            new_file_content=new_content,
+            old_content_sha=old_content[SHA256SUM_FIELD_NAME],
+            new_content_sha=new_content[SHA256SUM_FIELD_NAME],
         )
         assert bundle_file_change
         return bundle_file_change
@@ -100,21 +104,27 @@ class StubFile:
     def move(
         self, new_path: str, jsonpath_patches: Optional[dict[str, Any]] = None
     ) -> tuple[BundleFileChange, BundleFileChange]:
+        old_content = StubFile._prepare_content(self.content, self.filepath, {})
+        new_content = StubFile._prepare_content(
+            self.content, new_path, jsonpath_patches or {}
+        )
         old_bundle_change = create_bundle_file_change(
             path=self.filepath,
             schema=self.fileschema,
             file_type=BundleFileType[self.filetype.upper()],
-            old_file_content=StubFile._prepare_content(self.content, self.filepath, {}),
+            old_file_content=old_content,
             new_file_content=None,
+            old_content_sha=old_content[SHA256SUM_FIELD_NAME],
+            new_content_sha="",
         )
         new_bundle_change = create_bundle_file_change(
             path=new_path,
             schema=self.fileschema,
             file_type=BundleFileType[self.filetype.upper()],
             old_file_content=None,
-            new_file_content=StubFile._prepare_content(
-                self.content, new_path, jsonpath_patches or {}
-            ),
+            new_file_content=new_content,
+            old_content_sha="",
+            new_content_sha=new_content[SHA256SUM_FIELD_NAME],
         )
         assert old_bundle_change
         assert new_bundle_change

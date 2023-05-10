@@ -23,6 +23,8 @@ def test_root_diff_fully_covered_by_splits():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"split-a": "a", "split-b": "b"},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -68,6 +70,8 @@ def test_root_diff_uncovered_fully_covered_by_splits():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"split-a": "a", "split-b": "b"},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -112,6 +116,8 @@ def test_root_diff_uncovered():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"split-a": "a", "split-b": "b", "split-c": "c"},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -163,6 +169,8 @@ def test_nested_splits():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"top": {"sub": {"sub-sub": "value"}}},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -259,6 +267,8 @@ def test_diff_splitting_empty_parent_coverage():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"roles": ["role1", "role2"]},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -310,6 +320,8 @@ def test_nested_diff_splitting_empty_parent_coverage():
                 }
             }
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
 
     assert bundle_change
@@ -349,6 +361,8 @@ def test_diff_splitting_two_contexts_on_same_split():
         file_type=BundleFileType.DATAFILE,
         old_file_content=None,
         new_file_content={"something": "else", "roles": ["role"]},
+        old_content_sha="",
+        new_content_sha="new",
     )
 
     assert bundle_change

@@ -40,6 +40,8 @@ def test_find_implict_single_approver_with_jsonpath():
         ),
         old=None,
         new={"approver": "/user/approver.yml"},
+        old_content_sha="",
+        new_content_sha="new",
         diffs=[],
     )
     approver = find_approvers_with_implicit_ownership_jsonpath_selector(
@@ -62,6 +64,8 @@ def test_find_implict_multiple_approvers_with_jsonpath():
         ),
         old=None,
         new={"approvers": ["/user/approver-1.yml", "/user/approver-2.yml"]},
+        old_content_sha="",
+        new_content_sha="new",
         diffs=[],
     )
     approvers = find_approvers_with_implicit_ownership_jsonpath_selector(
@@ -87,6 +91,8 @@ def test_find_implict_approver_with_jsonpath_no_data():
         ),
         old=None,
         new=None,
+        old_content_sha="",
+        new_content_sha="",
         diffs=[],
     )
     approver = find_approvers_with_implicit_ownership_jsonpath_selector(

@@ -177,6 +177,8 @@ class AppInterfaceRepo:
                     ),
                     old=parsed_yaml,
                     new=parsed_yaml,
+                    old_content_sha="",
+                    new_content_sha="",
                     diffs=[],
                 )
         elif file_type == BundleFileType.RESOURCEFILE:
@@ -191,6 +193,8 @@ class AppInterfaceRepo:
                     ),
                     old=parsed_content,
                     new=parsed_content,
+                    old_content_sha="",
+                    new_content_sha="",
                     diffs=[],
                 )
         else:

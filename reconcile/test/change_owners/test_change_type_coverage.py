@@ -122,6 +122,8 @@ def test_root_change_type(cluster_owner_change_type: ChangeTypeV1, saas_file: St
                 {"$ref": "new-networkpolicy.yml"},
             ],
         },
+        old_content_sha="old",
+        new_content_sha="new",
     )
     assert namespace_change
     ctx = ChangeTypeContext(
