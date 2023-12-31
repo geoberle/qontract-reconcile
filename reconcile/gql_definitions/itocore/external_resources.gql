@@ -1,0 +1,57 @@
+# qenerate: plugin=pydantic_v1
+query TerraformIOTCoreResources {
+  namespaces: namespaces_v1 {
+    name
+    clusterAdmin
+    cluster {
+      name
+      serverUrl
+      insecureSkipTLSVerify
+      jumpHost {
+        ... CommonJumphostFields
+      }
+      automationToken {
+        ... VaultSecret
+      }
+      clusterAdminAutomationToken {
+        ... VaultSecret
+      }
+      spec {
+        region
+      }
+      internal
+      disable {
+        integrations
+      }
+    }
+    managedExternalResources
+    externalResources {
+      provider
+      ... on NamespaceTerraformProviderResourceAWS_v1 {
+        provider
+        provisioner {
+          name
+          resourcesDefaultRegion
+        }
+        resources {
+          provider
+          identifier
+          output_resource_name
+          output_format {
+            provider
+            ... on NamespaceTerraformResourceGenericSecretOutputFormat_v1 {
+                data
+            }
+          }
+          annotations
+          ... on NamespaceTerraformResourceIotThing_v1
+          {
+            region
+            policy
+            certificate_validity_period_hours
+          }
+        }
+      }
+    }
+  }
+}

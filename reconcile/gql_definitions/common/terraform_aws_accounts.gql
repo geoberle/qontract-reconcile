@@ -1,0 +1,6 @@
+# qenerate: plugin=pydantic_v1
+query TerraformAWSAccounts($filter: JSON) {
+  accounts: awsaccounts_v1(filter: $filter) {
+    ... AWSAccountTerraform
+  }
+}

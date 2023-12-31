@@ -179,6 +179,7 @@ from reconcile.utils.password_validator import (
 )
 from reconcile.utils.secret_reader import SecretReader
 from reconcile.utils.terraform import safe_resource_id
+from reconcile.utils.terraform.config import TerraformS3BackendConfig
 
 GH_BASE_URL = os.environ.get("GITHUB_API", "https://api.github.com")
 LOGTOES_RELEASE = "repos/app-sre/logs-to-elasticsearch-lambda/releases/latest"
@@ -339,6 +340,81 @@ class ElasticSearchLogGroupInfo:
     log_group_identifier: str
 
 
+@dataclass
+class AWSAccountCredentials:
+    aws_access_key_id: str
+    aws_secret_access_key: str
+
+
+def create_aws_terrascript(
+    provider_version: str,
+    resources_default_region: str,
+    supported_deployment_regions: list[str],
+    aws_account_creds: AWSAccountCredentials,
+    backend_config: TerraformS3BackendConfig,
+) -> Terrascript:
+    """
+    Configures a Terrascript class for an AWS account with the required provider(s)
+    and backend configuration.
+
+    :param provider_version: Terraform AWS provider version.
+    :param resources_default_region: AWS region to use for resources when no region is defined
+    :param supported_deployment_regions: other regions that can be used for the AWS account
+    :param aws_account_creds: AWS credentials to create resources in the account
+    :param backend_config: S3 as backend to store Terraform state.
+
+    :return: a Terrascript object configured to create resources in an AWS account
+    """
+    # Ref: https://github.com/mjuenema/python-terrascript#example
+    ts = Terrascript()
+
+    ts += Terraform(
+        backend=Backend(
+            "s3",
+            access_key=backend_config.access_key,
+            secret_key=backend_config.secret_key,
+            bucket=backend_config.bucket,
+            key=backend_config.key,
+            region=backend_config.region,
+        )
+    )
+
+    # supported deployment region aliases
+    for region in supported_deployment_regions or []:
+        ts += provider.aws(
+            access_key=aws_account_creds.aws_access_key_id,
+            secret_key=aws_account_creds.aws_secret_access_key,
+            version=provider_version,
+            region=region,
+            alias=region,
+            skip_region_validation=True,
+            default_tags=DEFAULT_TAGS,
+        )
+
+    # default region
+    ts += provider.aws(
+        access_key=aws_account_creds.aws_access_key_id,
+        secret_key=aws_account_creds.aws_secret_access_key,
+        version=provider_version,
+        region=resources_default_region,
+        skip_region_validation=True,
+        default_tags=DEFAULT_TAGS,
+    )
+
+    # the time provider can be removed if all AWS accounts
+    # upgrade to a provider version with this bug fix
+    # https://github.com/hashicorp/terraform-provider-aws/pull/20926
+    ts += time(version="0.9.1")
+
+    ts += provider.random(version="3.4.3")
+
+    ts += provider.template(version="2.2.0")
+
+    ts += provider.tls(version="4.0.5")
+
+    return ts
+
+
 class TerrascriptClient:  # pylint: disable=too-many-public-methods
     """
     At a high-level, this class is responsible for generating Terraform configuration in
@@ -375,47 +451,21 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
         locks = {}
         self.supported_regions = {}
         for name, config in self.configs.items():
-            # Ref: https://github.com/mjuenema/python-terrascript#example
-            ts = Terrascript()
             supported_regions = config["supportedDeploymentRegions"]
             self.supported_regions[name] = supported_regions
-            if supported_regions is not None:
-                for region in supported_regions:
-                    ts += provider.aws(
-                        access_key=config["aws_access_key_id"],
-                        secret_key=config["aws_secret_access_key"],
-                        version=self.versions.get(name),
-                        region=region,
-                        alias=region,
-                        skip_region_validation=True,
-                        default_tags=DEFAULT_TAGS,
-                    )
-
-            # Add default region, which will be in resourcesDefaultRegion
-            ts += provider.aws(
-                access_key=config["aws_access_key_id"],
-                secret_key=config["aws_secret_access_key"],
-                version=self.versions.get(name),
-                region=config["resourcesDefaultRegion"],
-                skip_region_validation=True,
-                default_tags=DEFAULT_TAGS,
-            )
-
-            # the time provider can be removed if all AWS accounts
-            # upgrade to a provider version with this bug fix
-            # https://github.com/hashicorp/terraform-provider-aws/pull/20926
-            ts += time(version="0.9.1")
-
-            ts += provider.random(version="3.4.3")
-
-            ts += provider.template(version="2.2.0")
-
-            ts += Terraform(
-                backend=TerrascriptClient.state_bucket_for_account(
+            tss[name] = create_aws_terrascript(
+                provider_version=self.versions[name],
+                resources_default_region=config["resourcesDefaultRegion"],
+                supported_deployment_regions=supported_regions
+                or [],
+                aws_account_creds=AWSAccountCredentials(
+                    aws_access_key_id=config["aws_access_key_id"],
+                    aws_secret_access_key=config["aws_secret_access_key"],
+                ),
+                backend_config=TerrascriptClient.state_bucket_for_account(
                     self.integration, name, config
-                )
+                ),
             )
-            tss[name] = ts
             locks[name] = Lock()
 
         self.tss: dict[str, Terrascript] = tss
@@ -465,7 +515,7 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
     @staticmethod
     def state_bucket_for_account(
         integration: str, account_name: str, config: dict[str, Any]
-    ) -> Backend:
+    ) -> TerraformS3BackendConfig:
         # creds
         access_key_backend_value = config["aws_access_key_id"]
         secret_key_backend_value = config["aws_secret_access_key"]
@@ -487,8 +537,7 @@ class TerrascriptClient:  # pylint: disable=too-many-public-methods
                 continue
 
         if bucket_backend_value and key_backend_value and region_backend_value:
-            return Backend(
-                "s3",
+            return TerraformS3BackendConfig(
                 access_key=access_key_backend_value,
                 secret_key=secret_key_backend_value,
                 bucket=bucket_backend_value,

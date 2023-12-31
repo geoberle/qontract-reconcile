@@ -306,6 +306,10 @@ class TerraformClient:  # pylint: disable=too-many-public-methods
             "aws_lb_target_group_attachment",
             "aws_iam_user_policy",
             "cloudflare_record",  # This is because a zone can contain up to one thousand records and it's not practical to require adding each record to deletionApprovals
+            "aws_iot_thing_principal_attachment",
+            "aws_iot_policy_attachment",
+            "aws_iot_policy",
+            "aws_iot_certificate",
         }
 
         # https://www.terraform.io/docs/internals/json-format.html

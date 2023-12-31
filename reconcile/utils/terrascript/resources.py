@@ -42,3 +42,35 @@ class TerrascriptResource(ABC):
     @abstractmethod
     def populate(self) -> list[Union[Resource, Output, Data]]:
         """Calling this method should return the Terrascript resources to be created."""
+
+
+class TerrascriptAWSResource(TerrascriptResource):
+    @property
+    def region(self) -> str:
+        region = self._spec.resource.get("region") or self._spec.provisioner.get(
+            "resourcesDefaultRegion"
+        )
+        if region is None:
+            raise ValueError(
+                f"region for resource {self._spec.identifier} is required but not available"
+            )
+        return region
+
+    @property
+    def provider(self) -> str:
+        region = self.region
+        return f"aws.{region}" if region else "aws"
+
+    @staticmethod
+    def _get_arn_ref(tf_resource: Resource) -> str:
+        """
+        Returns the ARN of the given resource.
+        """
+        return TerrascriptAWSResource._get_field_ref(tf_resource, "arn")
+
+    @staticmethod
+    def _get_field_ref(tf_resource: Resource, field: str) -> str:
+        """
+        Returns a field ref of the given resource.
+        """
+        return f"${{{tf_resource.__class__.__name__}.{tf_resource._name}.{field}}}"

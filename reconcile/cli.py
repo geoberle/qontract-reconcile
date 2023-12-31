@@ -1777,6 +1777,55 @@ def terraform_resources(
     )
 
 
+@integration.command(short_help="Manage AWS IOT Core using Terraform.")
+@print_to_file
+@vault_output_path
+@enable_deletion(default=False)
+@threaded()
+@binary(["terraform"])
+@binary_version("terraform", ["version"], TERRAFORM_VERSION_REGEX, TERRAFORM_VERSION)
+@account_name
+@internal()
+@use_jump_host()
+@click.option(
+    "--light/--full",
+    default=False,
+    help="run without executing terraform plan and apply.",
+)
+@click.pass_context
+def terraform_iot_core(
+    ctx,
+    print_to_file,
+    enable_deletion,
+    thread_pool_size,
+    account_name,
+    vault_output_path,
+    internal,
+    use_jump_host,
+    light,
+):
+    if print_to_file and is_file_in_git_repo(print_to_file):
+        raise PrintToFileInGitRepositoryError(print_to_file)
+
+    from reconcile import iotcore
+
+    run_class_integration(
+        integration=iotcore.TerraformIOTCoreIntegration(
+            iotcore.TerraformIOTCoreIntegrationParams(
+                print_to_file=print_to_file,
+                enable_deletion=enable_deletion,
+                thread_pool_size=thread_pool_size,
+                account_name=account_name,
+                internal=bool(internal),
+                light=light,
+                vault_output_path=vault_output_path,
+                use_jump_host=use_jump_host,
+            )
+        ),
+        ctx=ctx.obj,
+    )
+
+
 @integration.command(short_help="Manage Cloudflare Resources using Terraform.")
 @print_to_file
 @enable_deletion(default=False)
