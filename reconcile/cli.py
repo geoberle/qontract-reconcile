@@ -3080,6 +3080,19 @@ def acs_policies(ctx):
         ctx=ctx.obj,
     )
 
+@integration.command(short_help="Manages External Resources")
+@click.pass_context
+@click.option("--cluster", help="Cluster where the Jobs will be created", default=None)
+@click.option(
+    "--namespace", help="Namespace where the Jobs will be created", default=None
+)
+def external_resources(ctx, cluster: str, namespace: str):
+    import reconcile.external_resources.integration
+
+    run_integration(
+        reconcile.external_resources.integration, ctx.obj, cluster, namespace
+    )
+
 
 def get_integration_cli_meta() -> dict[str, IntegrationMeta]:
     """
