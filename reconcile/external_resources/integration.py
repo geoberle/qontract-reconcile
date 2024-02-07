@@ -1,11 +1,11 @@
 from reconcile.external_resources.manager import (
-    ExternalResourcesJobImpl,
     ExternalResourcesManager,
 )
 from reconcile.external_resources.model import (
     ExternalResourceModule,
     ExternalResourcesSettings,
 )
+from reconcile.external_resources.reconciler import K8sExternalResourcesReconciler
 from reconcile.external_resources.state import (
     ExternalResourcesStateDynamoDB,
 )
@@ -16,6 +16,7 @@ from reconcile.typed_queries.clusters_minimal import get_clusters_minimal
 
 # from reconcile.typed_queries.terraform_namespaces import get_namespaces
 from reconcile.typed_queries.external_resources_namespaces import get_namespaces
+from reconcile.utils.jobcontroller.controller import K8sJobController
 from reconcile.utils.oc import (
     OCCli,
 )
@@ -56,8 +57,15 @@ def run(dry_run: bool, cluster: str, namespace: str) -> None:
     )
     fetch_current_state(ri, oc, cluster, namespace)
 
-    impl = ExternalResourcesJobImpl(
-        ri=ri, oc=oc, cluster=cluster, namespace=namespace, dry_run=dry_run
+    impl = K8sExternalResourcesReconciler(
+        K8sJobController(
+            oc=oc,
+            cluster=cluster,
+            namespace=namespace,
+            integration=QONTRACT_INTEGRATION,
+            integration_version=QONTRACT_INTEGRATION_VERSION,
+            dry_run=False,
+        )
     )
 
     # state = init_state(

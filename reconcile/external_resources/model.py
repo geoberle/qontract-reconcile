@@ -41,6 +41,9 @@ class ExternalResourceKey(BaseModel, frozen=True):
     def state_path(self) -> str:
         return f"{self.provision_provider}/{self.provisioner_name}/{self.provider}/{self.identifier}"
 
+    def __str__(self) -> str:
+        return f"{self.provision_provider}/{self.provisioner_name}/{self.provider}/{self.identifier}"
+
 
 class Action(str, Enum):
     DESTROY: str = "Destroy"
@@ -53,12 +56,7 @@ class Reconciliation(BaseModel, frozen=True):
     image: str = ""
     input: str = ""
     action: Action = Action.APPLY
-
-    def digest(self) -> str:
-        digest = hashlib.md5(
-            json.dumps(self.dict(), sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        return digest
+    dry_run: bool = False
 
 
 T = TypeVar("T")
